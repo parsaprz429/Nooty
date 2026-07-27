@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <title>NootyCPS | تست سرعت کلیک حرفه‌ای نوتی</title>
+    
+    <!-- SEO & Metadata -->
+    <meta name="description" content="ابزار سنجش سرعت کلیک (CPS Test) اکوسیستم نوتی — اندازه‌گیری دقیق تعداد کلیک بر ثانیه با صفر میلی‌ثانیه تاخیر و محاسبه ریاضی بدون نیاز به اینترنت.">
+    <meta name="keywords" content="Nooty, NootyCPS, CPS Test, تست سرعت کلیک, نوتی, سرعت کلیک آنلاین">
+    <meta name="author" content="Nooty Ecosystem">
+    <meta name="theme-color" content="#0f172a">
+
+    <!-- Open Graph / Social Media -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://nooty.ir/cps">
+    <meta property="og:title" content="NootyCPS | تست سرعت کلیک نوتی">
+    <meta property="og:description" content="سرعت کلیکت چقدره؟ همین حالا تست کن و رتبه‌تو ببین!">
+    <meta property="og:image" content="https://nooty.ir/logo.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="https://nooty.ir/logo.png" id="favicon">
+
+    <style>
+        /* Smart Font Loader with Fallback */
+        @font-face {
+            font-family: 'Vazirmatn';
+            src: url('https://ai.nooty.ir/libs/fonts/Vazirmatn%5Bwght%5D.woff2') format('woff2-variations'),
+                 url('/ai/libs/fonts/Vazirmatn%5Bwght%5D.woff2') format('woff2-variations');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        :root {
+            --bg-body: #090d16;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --border-card: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --accent: #38bdf8;
+            --danger: #f43f5e;
+            --success: #10b981;
+            --radius-sm: 14px;
+            --radius-lg: 28px;
+            --radius-pill: 999px;
+            --shadow-soft: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+            --shadow-glow: 0 0 30px rgba(99, 102, 241, 0.35);
+            --ease: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Vazirmatn', system-ui, -apple-system, BlinkMacSystemFont, Tahoma, sans-serif;
+            background-color: var(--bg-body);
+            background-image: 
+                radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15), transparent 50%),
+                radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            background-size: 100% 100%, 24px 24px;
+            color: var(--text-main);
+            line-height: 1.6;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px 16px 50px;
+        }
+
+        /* Header & Navbar Logo */
+        header {
+            text-align: center;
+            padding: 30px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-header {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-main);
+            transition: transform 0.3s var(--ease);
+        }
+
+        .brand-header:hover { transform: translateY(-2px); }
+
+        .app-logo {
+            width: 42px;
+            height: 42px;
+            border-radius: var(--radius-sm);
+            object-fit: cover;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-card);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        header h1 {
+            font-size: 2.8rem;
+            font-weight: 900;
+            letter-spacing: -1px;
+            background: linear-gradient(135deg, #ffffff 30%, var(--primary) 70%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            font-weight: 500;
+        }
+
+        /* Main Container */
+        main {
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Time Selection Tabs */
+        .time-modes {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 8px;
+            border-radius: var(--radius-pill);
+            border: 1px solid var(--border-card);
+            box-shadow: var(--shadow-soft);
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            padding: 10px 22px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            border-radius: var(--radius-pill);
+            cursor: pointer;
+            transition: all 0.25s var(--ease);
+        }
+
+        .mode-btn:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.04); }
+
+        .mode-btn.active {
+            background: var(--primary);
+            color: #ffffff;
+            box-shadow: var(--shadow-glow);
+        }
+
+        /* Stats Panel Grid */
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+
+        .stat-box {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 20px 16px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-card);
+            box-shadow: var(--shadow-soft);
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s var(--ease);
+        }
+
+        .stat-box:hover { border-color: rgba(99, 102, 241, 0.4); }
+
+        .stat-box span {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .stat-box strong {
+            font-size: 2rem;
+            font-weight: 900;
+            color: var(--text-main);
+            font-numeric-notation: proportional-nums;
+        }
+
+        /* Core Click Box Area */
+        .click-area {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 2px dashed rgba(99, 102, 241, 0.4);
+            border-radius: 32px;
+            height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 10px;
+            cursor: pointer;
+            transition: all 0.25s var(--ease);
+            box-shadow: var(--shadow-soft);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .click-area:hover {
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.05);
+            box-shadow: var(--shadow-glow);
+        }
+
+        .click-area:active {
+            transform: scale(0.985);
+            border-style: solid;
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .click-area.finished {
+            cursor: not-allowed;
+            border-color: var(--border-card);
+            background: rgba(255, 255, 255, 0.02);
+            transform: none !important;
+            box-shadow: none;
+        }
+
+        .click-area h2 {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--text-main);
+            pointer-events: none;
+            transition: color 0.3s var(--ease);
+        }
+
+        .rank-badge {
+            font-size: 1.1rem;
+            font-weight: 800;
+            padding: 6px 18px;
+            border-radius: var(--radius-pill);
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--accent);
+            display: none;
+            animation: popIn 0.3s var(--ease);
+        }
+
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(0.8); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        /* Ripple Effect */
+        .ripple {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(99, 102, 241, 0.4);
+            transform: scale(0);
+            animation: ripple-effect 0.5s linear;
+            pointer-events: none;
+        }
+
+        @keyframes ripple-effect {
+            to { transform: scale(4); opacity: 0; }
+        }
+
+        /* Reset Button Container */
+        .reset-container {
+            text-align: center;
+            min-height: 55px;
+        }
+
+        .btn-reset {
+            background: var(--primary);
+            color: #ffffff;
+            border: none;
+            padding: 14px 38px;
+            font-family: inherit;
+            font-size: 1.05rem;
+            font-weight: 700;
+            border-radius: var(--radius-pill);
+            cursor: pointer;
+            transition: all 0.3s var(--ease);
+            display: none;
+            margin: 0 auto;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .btn-reset:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(99, 102, 241, 0.5);
+        }
+
+        .btn-reset:active { transform: scale(0.96); }
+
+        /* About Section */
+        .about-section {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 36px 30px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-card);
+            box-shadow: var(--shadow-soft);
+            text-align: right;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .about-section h3 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .about-section h3::before {
+            content: '';
+            display: inline-block;
+            width: 5px;
+            height: 22px;
+            background: var(--primary);
+            border-radius: 4px;
+        }
+
+        .about-section p {
+            color: var(--text-muted);
+            font-size: 0.98rem;
+            line-height: 1.9;
+            margin-bottom: 14px;
+            text-align: justify;
+        }
+
+        .about-section .math-formula {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-card);
+            padding: 4px 14px;
+            border-radius: 8px;
+            font-family: monospace;
+            color: var(--accent);
+            font-weight: bold;
+            direction: ltr;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .footer a { color: var(--primary); text-decoration: none; font-weight: 600; }
+        .footer a:hover { text-decoration: underline; }
+
+        /* Responsive Breakpoints */
+        @media (max-width: 768px) {
+            header h1 { font-size: 2.2rem; }
+            .stats-container { grid-template-columns: 1fr; gap: 12px; }
+            .click-area { height: 250px; }
+            .click-area h2 { font-size: 1.5rem; }
+            .about-section { padding: 24px 20px; }
+            .mode-btn { padding: 8px 16px; font-size: 0.88rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <a href="https://nooty.ir" class="brand-header">
+            <img src="https://nooty.ir/logo.png" alt="Nooty Logo" class="app-logo" id="headerLogo">
+            <span style="font-size:1.4rem; font-weight:800;">Nooty</span>
+        </a>
+        <h1>NootyCPS</h1>
+        <p>ابزار پیشرفته و بومی سنجش سرعت کلیک (CPS Test)</p>
+    </header>
+
+    <main>
+        <!-- Time Mode Tabs -->
+        <div class="time-modes" id="modeContainer">
+            <button class="mode-btn" data-time="1">۱ ثانیه</button>
+            <button class="mode-btn active" data-time="3">۳ ثانیه</button>
+            <button class="mode-btn" data-time="5">۵ ثانیه</button>
+            <button class="mode-btn" data-time="15">۱۵ ثانیه</button>
+            <button class="mode-btn" data-time="30">۳۰ ثانیه</button>
+        </div>
+
+        <!-- Live Statistics Panel -->
+        <div class="stats-container">
+            <div class="stat-box">
+                <span>زمان باقی‌مانده</span>
+                <strong id="timeDisplay">3.00s</strong>
+            </div>
+            <div class="stat-box">
+                <span>سرعت کلیک (CPS)</span>
+                <strong id="cpsDisplay">0.00</strong>
+            </div>
+            <div class="stat-box">
+                <span>تعداد کلیک‌ها</span>
+                <strong id="clickDisplay">0</strong>
+            </div>
+        </div>
+
+        <!-- Main Interactive Click Box -->
+        <div class="click-area" id="clickBox">
+            <h2 id="clickText">برای شروع کلیک کنید!</h2>
+            <div class="rank-badge" id="rankBadge">⚡ رتبه: -</div>
+        </div>
+
+        <!-- Reset Button Area -->
+        <div class="reset-container">
+            <button class="btn-reset" id="resetBtn">🔄 شروع مجدد تست</button>
+        </div>
+    </main>
+
+    <!-- About Section -->
+    <section class="about-section">
+        <h3>مأموریت نوتی؛ بومی‌سازی ابزارهای مدرن</h3>
+        <p>اکوسیستم <strong>نوتی (Nooty)</strong> با هدف توسعه ابزارهای سریع، بومی و بدون وابستگی به سرویس‌های خارجی طراحی شده است. سیستم <strong>NootyCPS</strong> بستر ایده‌آلی برای گیمرها و کاربران حرفه‌ای است تا با صفر میلی‌ثانیه تاخیر شبکه، قدرت و سرعت واکنش دست خود را ارزیابی کنند.</p>
+        <p>محاسبه فرمول CPS بر پایه دقیق‌ترین توابع مرورگر با فرمول ریاضی <span class="math-formula">CPS = Clicks / Time</span> و دقت میکروثانیه انجام می‌پذیرد.</p>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div>© 2026 Nooty Ecosystem — <a href="https://nooty.ir" target="_blank" rel="noopener">nooty.ir</a></div>
+        <div style="opacity:0.6;">طراحی شده برای شبکه ملی و دسترسی آفلاین متمرکز</div>
+    </footer>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // State Variables
+        let duration = 3;
+        let clicks = 0;
+        let hasStarted = false;
+        let isFinished = false;
+        let endTime = 0;
+        let animationFrameId;
+
+        // DOM Element References
+        const clickBox = document.getElementById('clickBox');
+        const clickText = document.getElementById('clickText');
+        const rankBadge = document.getElementById('rankBadge');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const cpsDisplay = document.getElementById('cpsDisplay');
+        const clickDisplay = document.getElementById('clickDisplay');
+        const resetBtn = document.getElementById('resetBtn');
+        const modeButtons = document.querySelectorAll('.mode-btn');
+        const headerLogo = document.getElementById('headerLogo');
+
+        // SVG Fallback for Logo
+        const DEFAULT_LOGO_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="%236366f1"><rect width="100" height="100" rx="20"/><path d="M30 70V30l40 40V30" stroke="%23fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+
+        // Smart Logo Fallback
+        if (headerLogo) {
+            headerLogo.onerror = () => {
+                if (headerLogo.src !== DEFAULT_LOGO_SVG) headerLogo.src = DEFAULT_LOGO_SVG;
+            };
+        }
+
+        // Convert Numbers to Persian Locale
+        function formatFaNum(num) {
+            return Number(num).toLocaleString('fa-IR', { minimumFractionDigits: num % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 });
+        }
+
+        // Mode Switcher Handler
+        modeButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (hasStarted && !isFinished) return;
+                modeButtons.forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                duration = parseInt(e.target.getAttribute('data-time'), 10);
+                resetTest();
+            });
+        });
+
+        // Click Ripple Effect
+        function createRipple(e) {
+            const rect = clickBox.getBoundingClientRect();
+            const circle = document.createElement('span');
+            const diameter = Math.max(rect.width, rect.height);
+            const radius = diameter / 2;
+
+            circle.style.width = circle.style.height = `${diameter}px`;
+            circle.style.left = `${e.clientX - rect.left - radius}px`;
+            circle.style.top = `${e.clientY - rect.top - radius}px`;
+            circle.classList.add('ripple');
+
+            const ripple = clickBox.getElementsByClassName('ripple')[0];
+            if (ripple) ripple.remove();
+
+            clickBox.appendChild(circle);
+        }
+
+        // Core Pointer Click Handler
+        clickBox.addEventListener('pointerdown', (e) => {
+            if (isFinished) return;
+
+            createRipple(e);
+
+            if (!hasStarted) startTest();
+
+            clicks++;
+            clickDisplay.innerText = formatFaNum(clicks);
+
+            const timePassed = duration - parseFloat(timeDisplay.getAttribute('data-raw-time') || duration);
+            if (timePassed > 0) {
+                const liveCps = (clicks / timePassed).toFixed(2);
+                cpsDisplay.innerText = formatFaNum(liveCps);
+            }
+        });
+
+        // Start Timing Engine
+        function startTest() {
+            hasStarted = true;
+            clickText.innerText = "سریع‌تر کلیک کن! ⚡";
+            
+            const startTime = performance.now();
+            endTime = startTime + (duration * 1000);
+
+            function updateTimer() {
+                const currentTime = performance.now();
+                const remainingTime = Math.max(0, endTime - currentTime);
+                const remainingSec = (remainingTime / 1000).toFixed(2);
+                
+                timeDisplay.innerText = formatFaNum(remainingSec) + 's';
+                timeDisplay.setAttribute('data-raw-time', remainingSec);
+
+                if (currentTime >= endTime) {
+                    endTest();
+                } else {
+                    animationFrameId = requestAnimationFrame(updateTimer);
+                }
+            }
+            animationFrameId = requestAnimationFrame(updateTimer);
+        }
+
+        // Calculate Rank Title
+        function getRank(cps) {
+            if (cps < 5) return '🐢 لاک‌پشتی (Slow)';
+            if (cps < 8) return '🐇 معمولی (Normal)';
+            if (cps < 12) return '⚡ پرو گیمر (Pro Gamer)';
+            if (cps < 16) return '🔥 فوق‌العاده (Fast)';
+            return '🚀 فراانسانی (GODLIKE)';
+        }
+
+        // End Test Handler
+        function endTest() {
+            isFinished = true;
+            timeDisplay.innerText = formatFaNum("0.00") + 's';
+            
+            const finalCps = (clicks / duration).toFixed(2);
+            cpsDisplay.innerText = formatFaNum(finalCps);
+            
+            // Anti-Cheat Warning for impossible CPS
+            if (finalCps > 70) {
+                clickText.innerText = "⚠️ کلیک غیرمجاز شناسایی شد!";
+                rankBadge.style.display = 'none';
+            } else {
+                clickText.innerText = "زمان تمام شد! 🎉";
+                rankBadge.innerText = `رتبه: ${getRank(finalCps)}`;
+                rankBadge.style.display = 'inline-block';
+            }
+
+            clickBox.classList.add('finished');
+            resetBtn.style.display = 'inline-block';
+        }
+
+        // Reset Engine
+        function resetTest() {
+            cancelAnimationFrame(animationFrameId);
+            hasStarted = false;
+            isFinished = false;
+            clicks = 0;
+            
+            timeDisplay.innerText = formatFaNum(duration.toFixed(2)) + 's';
+            timeDisplay.setAttribute('data-raw-time', duration);
+            cpsDisplay.innerText = formatFaNum("0.00");
+            clickDisplay.innerText = formatFaNum("0");
+            
+            clickText.innerText = "برای شروع کلیک کنید!";
+            rankBadge.style.display = 'none';
+            clickBox.classList.remove('finished');
+            resetBtn.style.display = 'none';
+        }
+
+        resetBtn.addEventListener('click', resetTest);
+        resetTest();
+    })();
+    </script>
+</body>
+</html>
