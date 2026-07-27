@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+  <title>NootyHide — ابزار رمزنگاری پیشرفته و محرمانه متون</title>
+
+  <!-- SEO & OpenGraph -->
+  <meta name="description" content="NootyHide - ابزار رمزنگاری و رمزگشایی محرمانه متون مبتنی بر الگوریتم AES-256-GCM و PBKDF2 بدون ارسال داده به سرور (Zero-Knowledge).">
+  <meta name="author" content="Nooty Ecosystem">
+  <meta name="theme-color" content="#030305">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="NootyHide — Client-Side Encryption Tool">
+  <meta property="og:description" content="متون حساس خود را با الگوریتم امن AES-GCM مستقیماً در مرورگر رمزگذاری کنید.">
+  <meta property="og:image" content="https://nooty.ir/logo.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="https://nooty.ir/logo.png" id="favicon">
+
+  <!-- Direct Font Setup with Multi-layer Fallbacks from ai.nooty.ir -->
+  <style>
+    /* 1. Primary Variable Font */
+    @font-face {
+      font-family: 'Vazirmatn';
+      src: url('https://ai.nooty.ir/libs/fonts/Vazirmatn%5Bwght%5D.woff2') format('woff2-variations'),
+           url('https://ai.nooty.ir/libs/fonts/Vazirmatn-Regular.woff2') format('woff2');
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
+    /* 2. Static Fallbacks for unsupported browsers or slow connections */
+    @font-face {
+      font-family: 'Vazirmatn';
+      src: url('https://ai.nooty.ir/libs/fonts/Vazirmatn-Regular.woff2') format('woff2');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'Vazirmatn';
+      src: url('https://ai.nooty.ir/libs/fonts/Vazirmatn-Bold.woff2') format('woff2');
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    :root {
+      --bg: #030305;
+      --surface: rgba(10, 10, 15, 0.85);
+      --surface-light: rgba(18, 18, 26, 0.75);
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --accent-cyan: #06b6d4;
+      --border: rgba(255, 255, 255, 0.08);
+      --danger: #ef4444;
+      --success: #10b981;
+      --transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      --overlay: rgba(3, 3, 5, 0.82);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Vazirmatn', system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Tahoma, sans-serif; }
+    
+    body {
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1.6;
+    }
+
+    /* Ambient Background Glows */
+    .ambient-glow {
+      position: fixed; width: 60vw; height: 60vw; max-width: 600px; max-height: 600px;
+      border-radius: 50%; filter: blur(140px); z-index: -1; opacity: 0.14;
+      animation: pulse 12s infinite alternate ease-in-out;
+      pointer-events: none;
+    }
+    .glow-blue { top: -20%; right: -10%; background: var(--accent-blue); }
+    .glow-purple { bottom: -20%; left: -10%; background: var(--accent-purple); }
+    
+    @keyframes pulse {
+      0% { transform: scale(1) translate(0, 0); }
+      100% { transform: scale(1.12) translate(-25px, 25px); }
+    }
+
+    .page-shell {
+      width: min(1200px, 94vw);
+      padding: clamp(1rem, 2vw, 2rem);
+      margin: 0 auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Navigation Bar */
+    .topbar {
+      position: sticky; top: 1rem; z-index: 20;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.8rem 1.4rem; margin: 0.5rem auto 2rem; width: 100%;
+      background: rgba(10, 10, 15, 0.75);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+      transition: var(--transition);
+    }
+    
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 900; font-size: 1.4rem; color: #fff; text-decoration: none;
+      letter-spacing: -0.3px;
+    }
+    .brand-logo {
+      width: 36px; height: 36px; border-radius: 10px; object-fit: cover;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    }
+    .brand-text-accent { color: var(--accent-blue); }
+    
+    .back-link {
+      color: var(--text); text-decoration: none; font-size: 0.88rem; opacity: 0.88;
+      display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600;
+      transition: var(--transition); background: rgba(255,255,255,0.04);
+      padding: 0.45rem 1rem; border-radius: 12px; border: 1px solid var(--border);
+    }
+    .back-link:hover { opacity: 1; color: var(--accent-cyan); border-color: var(--accent-cyan); }
+
+    /* Tool UI Shell */
+    .tool-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      padding: clamp(1.2rem, 2.5vw, 2.2rem);
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      backdrop-filter: blur(12px);
+    }
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: clamp(1.2rem, 2vw, 2rem);
+    }
+
+    .section-title {
+      font-size: clamp(1.1rem, 1.6vw, 1.35rem);
+      font-weight: 800; margin-bottom: 1.2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      color: #fff;
+    }
+
+    .form-group { margin-bottom: 1.4rem; }
+    label {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 0.5rem;
+      font-weight: 600; color: #d1d5db; font-size: 0.88rem;
+    }
+
+    .input-group { display: flex; gap: 0.6rem; align-items: stretch; }
+    .icon-buttons-row { display: flex; gap: 0.5rem; flex-shrink: 0; }
+
+    input, textarea {
+      width: 100%; padding: 0.85rem 1rem;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1.5px solid var(--border);
+      border-radius: 12px; color: var(--text);
+      font-size: 0.95rem; outline: none;
+      transition: var(--transition);
+    }
+    input:focus, textarea:focus {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    textarea { min-height: 145px; line-height: 1.6; resize: vertical; }
+
+    /* Modern Vector Buttons */
+    button {
+      border: none; cursor: pointer; font-weight: 700; font-size: 0.88rem;
+      border-radius: 12px; transition: var(--transition);
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+      padding: 0.85rem 1.1rem; user-select: none;
+    }
+    button:active { transform: scale(0.97); }
+    
+    .btn-icon {
+      background: rgba(255, 255, 255, 0.06); color: #fff;
+      padding: 0 0.85rem; border: 1px solid var(--border);
+    }
+    .btn-icon:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255,255,255,0.22); }
+
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem; }
+    
+    .btn-encrypt {
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+      color: #fff; box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3);
+    }
+    .btn-encrypt:hover { transform: translateY(-2px); box-shadow: 0 12px 25px rgba(59, 130, 246, 0.4); }
+    
+    .btn-decrypt {
+      background: transparent; border: 1.5px solid var(--accent-blue); color: var(--accent-blue);
+    }
+    .btn-decrypt:hover { background: rgba(59, 130, 246, 0.12); transform: translateY(-2px); }
+
+    kbd {
+      background: rgba(255, 255, 255, 0.15); border-radius: 4px; padding: 2px 5px;
+      font-size: 0.7rem; font-family: monospace; border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* Result Workspace */
+    .result-card {
+      background: var(--surface-light);
+      border: 1px solid var(--border);
+      border-radius: 22px; padding: 1.4rem;
+      display: flex; flex-direction: column; gap: 1rem;
+      justify-content: space-between;
+    }
+    
+    .result-stats {
+      font-size: 0.78rem; color: var(--muted); display: flex; justify-content: space-between; padding: 0 4px;
+      align-items: center;
+    }
+
+    .btn-copy-result {
+      width: 100%;
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff; box-shadow: 0 6px 18px rgba(16, 185, 129, 0.25);
+    }
+    .btn-copy-result:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(16, 185, 129, 0.35); }
+
+    .btn-swap {
+      width: 100%; background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border); color: var(--text);
+    }
+    .btn-swap:hover { background: rgba(255, 255, 255, 0.1); }
+
+    /* Dynamic Toast */
+    #toast {
+      visibility: hidden; min-width: 280px;
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white; text-align: center; border-radius: 14px; padding: 12px 20px;
+      position: fixed; z-index: 1000; bottom: 30px; left: 50%;
+      transform: translateX(-50%) translateY(20px); opacity: 0;
+      font-size: 0.9rem; font-weight: 700;
+      box-shadow: 0 12px 25px rgba(0, 0, 0, 0.4);
+      transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    #toast.show { visibility: visible; transform: translateX(-50%) translateY(0); opacity: 1; }
+
+    /* Modal Component */
+    .modal-overlay {
+      display: flex; position: fixed; inset: 0; background: var(--overlay); z-index: 999;
+      justify-content: center; align-items: center; padding: 1rem;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      opacity: 0; visibility: hidden; transition: all 0.35s ease;
+    }
+    .modal-overlay.show { opacity: 1; visibility: visible; }
+    
+    .modal-content {
+      background: #0d0e15; padding: 2rem; border-radius: 24px;
+      max-width: 480px; width: 100%; border: 1px solid var(--border);
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
+      transform: scale(0.92); transition: var(--transition);
+    }
+    .modal-overlay.show .modal-content { transform: scale(1); }
+    .modal-content h2 { margin-bottom: 1.2rem; text-align: center; font-size: 1.3rem; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    
+    .tutorial-steps { display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 1.5rem; }
+    .step {
+      display: flex; gap: 1rem; align-items: center;
+      background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border);
+      padding: 0.9rem 1rem; border-radius: 14px;
+    }
+    .step-icon { 
+      background: rgba(59, 130, 246, 0.1); color: var(--accent-blue); 
+      width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0; 
+    }
+    .step-text h4 { color: var(--accent-blue); margin-bottom: 0.1rem; font-size: 0.92rem; }
+    .step-text p { color: var(--muted); font-size: 0.83rem; line-height: 1.4; }
+
+    .modal-actions {
+      display: flex; justify-content: space-between; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+    }
+    .modal-actions label { margin: 0; font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
+    .modal-actions input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--accent-blue); cursor: pointer; }
+    
+    .btn-close-modal {
+      background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+      color: #fff; padding: 0.7rem 1.4rem; border-radius: 12px;
+    }
+
+    /* Footer Branding */
+    .footer {
+      text-align: center; font-size: 0.8rem; color: var(--muted);
+      padding: 24px 20px 10px; margin-top: auto; width: 100%;
+    }
+    .footer a { color: var(--accent-blue); text-decoration: none; font-weight: 600; }
+    .footer a:hover { text-decoration: underline; }
+
+    /* Responsive Design */
+    @media (max-width: 980px) {
+      .tool-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .input-group { flex-direction: column; }
+      .icon-buttons-row { width: 100%; }
+      .icon-buttons-row > button { flex: 1; }
+      .actions { grid-template-columns: 1fr; }
+      .topbar { margin-bottom: 1.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient Glow Effects -->
+  <div class="ambient-glow glow-blue"></div>
+  <div class="ambient-glow glow-purple"></div>
+
+  <!-- Modal Tutorial -->
+  <div id="tutorialModal" class="modal-overlay">
+    <div class="modal-content">
+      <h2>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        راهنمای سریع NootyHide
+      </h2>
+      <div class="tutorial-steps">
+        <div class="step">
+          <div class="step-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <div class="step-text">
+            <h4>۱. تنظیم کلید رمزنگاری</h4>
+            <p>یک رمز عبور مطمئن وارد کنید یا با دکمه تولید کلید، یک رمز تصادفی امن بسازید.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <div class="step-text">
+            <h4>۲. رمزگذاری امن (AES-256)</h4>
+            <p>متن خود را وارد کرده و دکمه <strong>رمزگذاری</strong> را فشار دهید.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+          </div>
+          <div class="step-text">
+            <h4>۳. رمزگشایی سریع متون</h4>
+            <p>متن قفل‌شده (با پیشوند NH-) و کلید مربوطه را وارد کرده و رمزگشایی کنید.</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <label><input type="checkbox" id="dontShowAgain"> دیگر نمایش نده</label>
+        <button class="btn-close-modal" onclick="closeModal()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          متوجه شدم
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-shell">
+    
+    <!-- Topbar Navigation -->
+    <header class="topbar">
+      <a href="https://nooty.ir" class="brand" aria-label="NootyHide Logo">
+        <img src="https://nooty.ir/logo.png" alt="Nooty Logo" class="brand-logo" id="brandLogo">
+        <span>Nooty<span class="brand-text-accent">Hide</span></span>
+      </a>
+      <a class="back-link" href="https://nooty.ir">
+        بازگشت به خانه
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </a>
+    </header>
+
+    <!-- Main Tool Workspace -->
+    <main class="tool-card">
+      <div class="tool-grid">
+        
+        <!-- Left Section: Input Form -->
+        <section>
+          <div class="section-title">
+            <span style="display: flex; align-items: center; gap: 8px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              رمزنگاری محرمانه متون
+            </span>
+            <span style="font-size: 0.75rem; color: var(--muted); font-weight: 500;">AES-GCM 256-bit</span>
+          </div>
+
+          <div class="form-group">
+            <label for="key">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+              کلید رمزنگاری (پسورد)
+            </label>
+            <div class="input-group">
+              <input type="password" id="key" placeholder="رمز عبور دلخواه خود را وارد کنید..." autocomplete="off">
+              <div class="icon-buttons-row">
+                <button type="button" class="btn-icon" onclick="togglePassword()" title="نمایش / مخفی کردن">
+                  <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+                <button type="button" class="btn-icon" onclick="generateKey()" title="تولید کلید تصادفی امن">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                </button>
+                <button type="button" class="btn-icon" onclick="copyKey()" title="کپی کلید">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <label for="textData" style="margin-bottom: 0;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                متن ورودی (اصلی یا رمزگذاری شده)
+              </label>
+              <span class="result-stats" id="inputStats">۰ کاراکتر</span>
+            </div>
+            <textarea id="textData" placeholder="متن حساس خود را بنویسید یا متن قفل‌شده (شروع با NH-) را جهت رمزگشایی وارد کنید..."></textarea>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn-encrypt" onclick="processData('encrypt')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              رمزگذاری <kbd>Ctrl+Enter</kbd>
+            </button>
+            <button type="button" class="btn-decrypt" onclick="processData('decrypt')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+              رمزگشایی متن
+            </button>
+          </div>
+        </section>
+
+        <!-- Right Section: Result Output -->
+        <section class="result-card">
+          <div class="section-title">
+            <span style="display: flex; align-items: center; gap: 8px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              نتیجه عملیات
+            </span>
+            <button type="button" style="background:transparent; border:none; padding:0; color:var(--muted); font-size:0.8rem; display:flex; align-items:center; gap:4px;" onclick="clearAll()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              پاکسازی
+            </button>
+          </div>
+
+          <textarea id="result" readonly placeholder="نتیجه خروجی در این بخش قرار می‌گیرد..."></textarea>
+          
+          <div class="result-stats">
+            <span id="resultStats">۰ کاراکتر</span>
+            <span style="display: flex; align-items: center; gap: 4px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Zero-Knowledge Architecture
+            </span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+            <button type="button" class="btn-copy-result" onclick="copyResult()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              کپی متن خروجی
+            </button>
+            <button type="button" class="btn-swap" onclick="swapResultToInput()" title="انتقال نتیجه به کادر ورودی">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+              انتقال نتیجه به ورودی
+            </button>
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+    <!-- Footer Branding -->
+    <footer class="footer">
+      <div>© 2026 Nooty Ecosystem — <a href="https://nooty.ir" target="_blank" rel="noopener">nooty.ir</a></div>
+      <div style="opacity: 0.6; margin-top: 4px;">پردازش تماماً محلی در مرورگر کاربر بدون ذخیره‌سازی سمت سرور</div>
+    </footer>
+
+  </div>
+
+  <!-- Dynamic Toast Indicator -->
+  <div id="toast">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+    <span>عملیات با موفقیت انجام شد!</span>
+  </div>
+
+  <script>
+    'use strict';
+
+    // SVG Logo Fallback System for Offline/Network Drop Handling
+    const brandLogo = document.getElementById('brandLogo');
+    const DEFAULT_LOGO_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="%233b82f6"><rect width="100" height="100" rx="20"/><path d="M30 70V30l40 40V30" stroke="%23fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+    if (brandLogo) {
+      brandLogo.onerror = () => { if (brandLogo.src !== DEFAULT_LOGO_SVG) brandLogo.src = DEFAULT_LOGO_SVG; };
+    }
+
+    // Modal Lifecycle
+    window.addEventListener('DOMContentLoaded', () => {
+      if (localStorage.getItem('nootyhide_tutorial_hidden') !== 'true') {
+        const modal = document.getElementById('tutorialModal');
+        modal.style.display = 'flex';
+        setTimeout(() => modal.classList.add('show'), 50);
+      }
+      setupStatsCounters();
+    });
+
+    function closeModal() {
+      if (document.getElementById('dontShowAgain').checked) {
+        localStorage.setItem('nootyhide_tutorial_hidden', 'true');
+      }
+      const modal = document.getElementById('tutorialModal');
+      modal.classList.remove('show');
+      setTimeout(() => modal.style.display = 'none', 400);
+    }
+
+    // Toast Alert System with SVG Icons
+    let toastTimeout;
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById("toast");
+      const iconSvg = isError 
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+
+      toast.innerHTML = `${iconSvg} <span>${msg}</span>`;
+      toast.style.background = isError ? "var(--danger)" : "linear-gradient(135deg, #10b981, #059669)";
+      toast.classList.add("show");
+      
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => toast.classList.remove("show"), 3200);
+    }
+
+    // Character Counter System
+    function setupStatsCounters() {
+      const textData = document.getElementById('textData');
+      const result = document.getElementById('result');
+      const inputStats = document.getElementById('inputStats');
+      const resultStats = document.getElementById('resultStats');
+
+      textData.addEventListener('input', () => {
+        inputStats.innerText = `${textData.value.length.toLocaleString('fa-IR')} کاراکتر`;
+      });
+
+      const observer = new MutationObserver(() => {
+        resultStats.innerText = `${result.value.length.toLocaleString('fa-IR')} کاراکتر`;
+      });
+      observer.observe(result, { attributes: true, childList: true, characterData: true, subtree: true });
+    }
+
+    // Password Eye Toggle
+    function togglePassword() {
+      const input = document.getElementById("key");
+      const eyeIcon = document.getElementById("eyeIcon");
+      if (input.type === "password") {
+        input.type = "text";
+        eyeIcon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+      } else {
+        input.type = "password";
+        eyeIcon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+      }
+    }
+
+    // Cryptographically Secure Key Generator
+    function generateKey() {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=";
+      const array = new Uint8Array(20);
+      window.crypto.getRandomValues(array);
+      
+      let key = "";
+      for (let i = 0; i < array.length; i++) {
+        key += chars.charAt(array[i] % chars.length);
+      }
+      
+      const keyInput = document.getElementById("key");
+      keyInput.value = key;
+      keyInput.type = "text";
+      
+      const eyeIcon = document.getElementById("eyeIcon");
+      eyeIcon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+
+      showToast("کلید تصادفی با امنیت بالا تولید شد");
+    }
+
+    function copyKey() {
+      const keyText = document.getElementById("key").value;
+      if (!keyText) { showToast("کلیدی برای کپی وجود ندارد!", true); return; }
+      navigator.clipboard.writeText(keyText).then(() => showToast("کلید با موفقیت کپی شد"));
+    }
+
+    function copyResult() {
+      const resultText = document.getElementById("result").value;
+      if (!resultText) { showToast("نتیجه‌ای برای کپی وجود ندارد!", true); return; }
+      navigator.clipboard.writeText(resultText).then(() => showToast("متن خروجی کپی شد"));
+    }
+
+    function swapResultToInput() {
+      const resultVal = document.getElementById("result").value;
+      if (!resultVal) { showToast("کادر خروجی خالی است!", true); return; }
+      document.getElementById("textData").value = resultVal;
+      document.getElementById("result").value = "";
+      document.getElementById("inputStats").innerText = `${resultVal.length.toLocaleString('fa-IR')} کاراکتر`;
+      showToast("خروجی به کادر ورودی منتقل شد");
+    }
+
+    function clearAll() {
+      document.getElementById("textData").value = "";
+      document.getElementById("result").value = "";
+      document.getElementById("key").value = "";
+      document.getElementById("inputStats").innerText = "۰ کاراکتر";
+      showToast("تمام کادرها پاکسازی شدند");
+    }
+
+    // Cryptographic Core (AES-256-GCM + PBKDF2 - 200,000 Iterations)
+    async function getCryptoKey(password, salt) {
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), {name: "PBKDF2"}, false, ["deriveKey"]);
+      return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: salt, iterations: 200000, hash: "SHA-256" },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        true, ["encrypt", "decrypt"]
+      );
+    }
+
+    function buf2hex(buffer) {
+      return Array.from(new Uint8Array(buffer)).map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+
+    function hex2buf(hexString) {
+      const bytes = new Uint8Array(Math.ceil(hexString.length / 2));
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(hexString.substr(i * 2, 2), 16);
+      }
+      return bytes;
+    }
+
+    async function processData(action) {
+      const password = document.getElementById('key').value;
+      const text = document.getElementById('textData').value.trim();
+      const resultBox = document.getElementById('result');
+
+      if (!password) { showToast("لطفاً کلید (رمز عبور) را وارد کنید.", true); return; }
+      if (!text) { showToast("لطفاً متن ورودی را وارد کنید.", true); return; }
+
+      try {
+        if (action === 'encrypt') {
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const iv   = crypto.getRandomValues(new Uint8Array(12));
+          const key  = await getCryptoKey(password, salt);
+
+          const encodedText = new TextEncoder().encode(text);
+          const encryptedContent = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, encodedText);
+
+          const finalBuffer = new Uint8Array(salt.length + iv.length + encryptedContent.byteLength);
+          finalBuffer.set(salt, 0);
+          finalBuffer.set(iv, salt.length);
+          finalBuffer.set(new Uint8Array(encryptedContent), salt.length + iv.length);
+
+          resultBox.value = "NH-" + buf2hex(finalBuffer);
+          showToast("متن با موفقیت رمزگذاری شد");
+        } 
+        else if (action === 'decrypt') {
+          if (!text.startsWith("NH-")) {
+            throw new Error("فرمت متن نامعتبر است (باید با NH- شروع شود)");
+          }
+          
+          const dataHex = text.replace(/^NH-/, "");
+          const dataBuffer = hex2buf(dataHex);
+
+          if (dataBuffer.length < 28) throw new Error("داده مخدوش است");
+
+          const salt = dataBuffer.slice(0, 16);
+          const iv   = dataBuffer.slice(16, 28);
+          const data = dataBuffer.slice(28);
+
+          const key = await getCryptoKey(password, salt);
+          const decryptedContent = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, data);
+
+          resultBox.value = new TextDecoder().decode(decryptedContent);
+          showToast("رمزگشایی با موفقیت انجام شد");
+        }
+      } catch (err) {
+        console.error(err);
+        showToast("خطا: کلید اشتباه است یا فرمت داده مخدوش شده.", true);
+        resultBox.value = "";
+      }
+    }
+
+    // Global Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'Enter') {
+        e.preventDefault();
+        processData('decrypt');
+      } else if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        processData('encrypt');
+      }
+    });
+  </script>
+</body>
+</html>
