@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <title>پخش‌کننده فرکانس نوتی | Nooty Frequency Generator</title>
+    
+    <!-- SEO & Metadata -->
+    <meta name="description" content="ابزار پیشرفته پخش فرکانس صوتی اکوسیستم نوتی — تولید امواج دقیق سینوسی از ۱,۰۰۰ تا ۴۰,۰۰۰ هرتز.">
+    <meta name="keywords" content="Nooty, Frequency Generator, Audio Wave, نوتی, پخش فرکانس, فرکانس صوتی">
+    <meta name="author" content="Nooty Ecosystem">
+    <meta name="theme-color" content="#09090b">
+
+    <!-- Open Graph / Social Media -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://nooty.ir/">
+    <meta property="og:title" content="پخش‌کننده فرکانس نوتی | Nooty Frequency">
+    <meta property="og:description" content="تولید امواج صوتی آنلاین از ۱,۰۰۰ تا ۴۰,۰۰۰ هرتز با کیفیت بالا.">
+    <meta property="og:image" content="https://nooty.ir/logo.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="https://nooty.ir/logo.png" id="favicon">
+
+    <style>
+        /* Smart Font Loader with Fallback */
+        @font-face {
+            font-family: 'Vazirmatn';
+            src: url('https://ai.nooty.ir/libs/fonts/Vazirmatn%5Bwght%5D.woff2') format('woff2-variations'),
+                 url('/ai/libs/fonts/Vazirmatn%5Bwght%5D.woff2') format('woff2-variations');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        :root {
+            --primary: #007AFF;
+            --primary-glow: rgba(0, 122, 255, 0.4);
+            --bg: #09090b;
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --danger: #ef4444;
+            --danger-glow: rgba(239, 68, 68, 0.4);
+            --radius: 24px;
+            --pill: 999px;
+            --ease: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Vazirmatn', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            overflow-x: hidden;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Ambient Dynamic Background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(circle at 50% 20%, rgba(0, 122, 255, 0.12), transparent 70%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 420px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Header Logo Section */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            font-weight: 800;
+            font-size: 1.25rem;
+            text-decoration: none;
+            color: var(--text);
+            transition: transform 0.3s var(--ease);
+        }
+
+        .header:hover { transform: translateY(-2px); }
+
+        .app-logo {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: var(--glass-border);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Glassmorphism Card */
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 32px 24px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card h3 {
+            text-align: center;
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 24px;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        /* Display Frequency Screen */
+        .freq-display {
+            text-align: center;
+            margin-bottom: 24px;
+            user-select: none;
+        }
+
+        .freq-num {
+            font-size: 3.6rem;
+            font-weight: 900;
+            line-height: 1;
+            letter-spacing: -1px;
+            background: linear-gradient(180deg, #ffffff 30%, var(--primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-numeric-notation: proportional-nums;
+        }
+
+        .freq-unit {
+            font-size: 0.95rem;
+            color: var(--muted);
+            font-weight: 600;
+            margin-top: 6px;
+            display: block;
+        }
+
+        /* Custom Range Slider */
+        .range-container { position: relative; margin: 20px 0 28px; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            border-radius: var(--pill);
+            background: rgba(255, 255, 255, 0.08);
+            outline: none;
+            cursor: pointer;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 3px solid var(--primary);
+            box-shadow: 0 0 20px var(--primary-glow);
+            cursor: pointer;
+            transition: transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
+        }
+
+        input[type=range]::-webkit-slider-thumb:active {
+            transform: scale(1.25);
+            box-shadow: 0 0 28px var(--primary);
+        }
+
+        .range-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: var(--muted);
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        /* Action Buttons */
+        .btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: var(--pill);
+            font-family: inherit;
+            font-size: 1.05rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s var(--ease);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-play {
+            background: var(--primary);
+            color: #ffffff;
+            box-shadow: 0 8px 24px var(--primary-glow);
+        }
+
+        .btn-play:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 28px var(--primary-glow);
+        }
+
+        .btn-stop {
+            background: var(--danger);
+            color: #ffffff;
+            box-shadow: 0 8px 24px var(--danger-glow);
+        }
+
+        .btn-stop:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 28px var(--danger-glow);
+        }
+
+        .btn:active { transform: scale(0.97) !important; }
+
+        /* Disclaimer Modal */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(9, 9, 11, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            opacity: 1;
+            visibility: visible;
+            transition: opacity 0.3s var(--ease), visibility 0.3s var(--ease);
+        }
+
+        .modal.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .modal-box {
+            width: 100%;
+            max-width: 380px;
+            background: rgba(20, 20, 25, 0.95);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 32px 24px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            transform: scale(1) translateY(0);
+            transition: transform 0.3s var(--ease);
+        }
+
+        .modal.hidden .modal-box { transform: scale(0.92) translateY(20px); }
+
+        .modal-box .icon { font-size: 3rem; line-height: 1; }
+        .modal-box h2 { font-size: 1.25rem; font-weight: 800; color: #fff; }
+        .modal-box p { font-size: 0.88rem; color: var(--muted); line-height: 1.8; }
+        .modal-box .warn { color: #fbbf24; font-weight: 700; }
+
+        .btn-accept {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 6px 20px var(--primary-glow);
+            font-size: 0.95rem;
+            padding: 14px;
+            margin-top: 6px;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            font-size: 0.78rem;
+            color: var(--muted);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .footer a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s;
+        }
+
+        .footer a:hover { text-decoration: underline; }
+
+        .footer .brand {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+
+        @media (max-width: 400px) {
+            .card { padding: 24px 18px; }
+            .freq-num { font-size: 3rem; }
+            .btn { padding: 14px; font-size: 0.98rem; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Disclaimer Modal -->
+<div class="modal" id="modal">
+    <div class="modal-box">
+        <span class="icon">⚠️</span>
+        <h2>هشدار و شرایط استفاده</h2>
+        <p>
+            این ابزار صرفاً یک <span class="warn">پخش‌کننده فرکانس صوتی</span> بوده و
+            <span class="warn">به هیچ عنوان جایگزین تست شنوایی پزشکی</span> یا معاینات تخصصی نمی‌باشد.
+        </p>
+        <p style="font-size:0.8rem; opacity:0.8;">
+            جهت جلوگیری از آسیب احتمالی به سیستم شنوایی، حتماً حجم صدای دستگاه خود را در سطح پایین قرار دهید.
+        </p>
+        <button class="btn btn-accept" id="acceptBtn">✅ شرایط را می‌پذیرم</button>
+    </div>
+</div>
+
+<!-- Main Container -->
+<div class="container">
+    <a href="https://nooty.ir" class="header">
+        <img src="https://nooty.ir/logo.png" alt="Nooty Logo" class="app-logo" id="headerLogo">
+        <span>Nooty</span>
+    </a>
+
+    <div class="card">
+        <h3>🔊 پخش‌کننده فرکانس نوتی</h3>
+
+        <div class="freq-display">
+            <span class="freq-num" id="freqNum">۱,۰۰۰</span>
+            <span class="freq-unit">هرتز (Hz)</span>
+        </div>
+
+        <div class="range-container">
+            <input type="range" id="slider" min="1000" max="40000" value="1000" step="1" aria-label="انتخاب فرکانس">
+            <div class="range-labels">
+                <span>۱,۰۰۰ Hz</span>
+                <span>۴۰,۰۰۰ Hz</span>
+            </div>
+        </div>
+
+        <button class="btn btn-play" id="playBtn">▶ شروع پخش</button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="brand">
+            <img src="https://nooty.ir/logo.png" alt="نوتی" class="app-logo" style="width:18px; height:18px;" id="footerLogo">
+            اکوسیستم هوشمند نوتی
+        </div>
+        <div>© 2026 Nooty Ecosystem — <a href="https://nooty.ir" target="_blank" rel="noopener">nooty.ir</a></div>
+        <div style="opacity:0.5; font-size:0.7rem;">ابزار آزمایشگاهی امواج صوتی | غیرپزشکی</div>
+    </div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    // DOM Elements
+    const modal = document.getElementById('modal');
+    const acceptBtn = document.getElementById('acceptBtn');
+    const slider = document.getElementById('slider');
+    const freqNum = document.getElementById('freqNum');
+    const playBtn = document.getElementById('playBtn');
+    const logos = [document.getElementById('headerLogo'), document.getElementById('footerLogo')];
+
+    // SVG Fallback for Logo
+    const DEFAULT_LOGO_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="%23007AFF"><rect width="100" height="100" rx="20"/><path d="M30 70V30l40 40V30" stroke="%23fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+
+    // Audio Engine State
+    let accepted = sessionStorage.getItem('nf-disclaimer') === '1';
+    let audioCtx = null;
+    let osc = null;
+    let gainNode = null;
+    let playing = false;
+
+    // Smart Logo Fallback Handler
+    logos.forEach(img => {
+        if (!img) return;
+        img.onerror = () => {
+            if (img.src !== DEFAULT_LOGO_SVG) {
+                img.src = DEFAULT_LOGO_SVG;
+            }
+        };
+        // Retry secondary paths if primary fails
+        if (img.src.includes('https://nooty.ir/logo.png')) {
+            const tempImg = new Image();
+            tempImg.src = img.src;
+            tempImg.onerror = () => {
+                img.src = '/logo.png';
+            };
+        }
+    });
+
+    // Disclaimer Logic
+    if (accepted) modal.classList.add('hidden');
+
+    acceptBtn.addEventListener('click', () => {
+        sessionStorage.setItem('nf-disclaimer', '1');
+        modal.classList.add('hidden');
+        accepted = true;
+    });
+
+    // Persian Number Formatting
+    function formatFaNum(num) {
+        return Number(num).toLocaleString('fa-IR');
+    }
+
+    // Slider Event Handler
+    slider.addEventListener('input', (e) => {
+        const val = e.target.value;
+        freqNum.textContent = formatFaNum(val);
+        if (osc && audioCtx && playing) {
+            osc.frequency.setTargetAtTime(val, audioCtx.currentTime, 0.01);
+        }
+    });
+
+    // Audio Control Logic
+    function startAudio() {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        osc = audioCtx.createOscillator();
+        gainNode = audioCtx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(slider.value, audioCtx.currentTime);
+
+        // Smooth Fade-In (Prevents audio pop)
+        gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.05);
+
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        osc.start();
+
+        playBtn.textContent = '⏹ توقف پخش';
+        playBtn.className = 'btn btn-stop';
+        playing = true;
+    }
+
+    function stopAudio() {
+        if (!audioCtx || !osc) return;
+
+        // Smooth Fade-Out
+        gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.05);
+        
+        setTimeout(() => {
+            if (osc) {
+                osc.stop();
+                osc.disconnect();
+                osc = null;
+            }
+            if (audioCtx) {
+                audioCtx.close();
+                audioCtx = null;
+            }
+            playBtn.textContent = '▶ شروع پخش';
+            playBtn.className = 'btn btn-play';
+            playing = false;
+        }, 60);
+    }
+
+    playBtn.addEventListener('click', () => {
+        if (!accepted) {
+            modal.classList.remove('hidden');
+            return;
+        }
+
+        if (!playing) {
+            startAudio();
+        } else {
+            stopAudio();
+        }
+    });
+
+    // Clean up Web Audio API on tab leave/refresh
+    window.addEventListener('beforeunload', () => {
+        if (playing) stopAudio();
+    });
+})();
+</script>
+</body>
+</html>
