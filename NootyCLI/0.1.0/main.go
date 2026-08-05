@@ -29,7 +29,6 @@ const (
 	Magenta     = "\033[35m"
 	Cyan        = "\033[36m"
 	White       = "\033[37m"
-	BgDarkGray  = "\033[48;5;235m"
 )
 
 // Config Structure
@@ -38,7 +37,7 @@ type Config struct {
 	APIKey    string `json:"api_key"`
 	Model     string `json:"model"`
 	Safety    string `json:"safety"`
-	CustomDNS string `json:"custom_dns"`
+	ActiveDNS string `json:"active_dns"`
 }
 
 // Memory Structure
@@ -46,6 +45,28 @@ type Memory struct {
 	ID        int       `json:"id"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Flexible API Error Struct (Handles string OR struct JSON formats)
+type APIError struct {
+	Message string
+}
+
+func (e *APIError) UnmarshalJSON(data []byte) error {
+	var strVal string
+	if err := json.Unmarshal(data, &strVal); err == nil {
+		e.Message = strVal
+		return nil
+	}
+	var structVal struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(data, &structVal); err == nil {
+		e.Message = structVal.Message
+		return nil
+	}
+	e.Message = string(data)
+	return nil
 }
 
 // OpenAI API Standard Structures
@@ -88,9 +109,7 @@ type ChatCompletionResp struct {
 	Choices []struct {
 		Message Message `json:"message"`
 	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	Error *APIError `json:"error,omitempty"`
 }
 
 // Application Global State
@@ -105,6 +124,16 @@ type AppState struct {
 }
 
 var state AppState
+
+// Anti-Sanction DNS Pool (Electro, Shecan, Begzar)
+var dnsPool = []struct {
+	Name string
+	IP   string
+}{
+	{"Electro", "10.202.10.202"},
+	{"Shecan", "178.22.122.100"},
+	{"Begzar", "185.55.226.26"},
+}
 
 // Popular Preset Models
 var presetModels = []struct {
@@ -140,13 +169,13 @@ func main() {
 			continue
 		}
 
-		// Handle System Slash Commands
+		// System Slash Commands
 		if strings.HasPrefix(input, "/") {
 			handleCommand(input, scanner)
 			continue
 		}
 
-		// Direct Raw Shell Execution with ! prefix
+		// Direct Raw Shell Execution (! prefix)
 		if strings.HasPrefix(input, "!") {
 			if state.Mode != "cli" {
 				fmt.Printf("%s[!] Raw shell execution is only allowed in 'cli' mode.%s\n", Yellow, Reset)
@@ -157,8 +186,8 @@ func main() {
 			continue
 		}
 
-		// AI Query Processing
-		processAIQuery(input)
+		// Autonomous AI Agent Loop Processing
+		processAIQueryAutonomous(input, scanner)
 	}
 }
 
@@ -186,7 +215,7 @@ func initAppState() {
 			APIKey:    os.Getenv("NOOTY_API_KEY"),
 			Model:     "qwen/qwen-2.5-coder-32b-instruct",
 			Safety:    "strict",
-			CustomDNS: "10.202.10.202",
+			ActiveDNS: "Electro (10.202.10.202)",
 		}
 		saveConfig()
 	} else {
@@ -194,7 +223,6 @@ func initAppState() {
 		_ = json.Unmarshal(data, &state.Config)
 	}
 
-	// Safety fallback check for URLs
 	if state.Config.BaseURL == "" {
 		state.Config.BaseURL = "https://openrouter.ai/api/v1"
 	}
@@ -208,10 +236,10 @@ func initAppState() {
 	loadMemories()
 }
 
-// Mask Sensitive API Key (Shows first 8 and last 4 chars)
+// Mask Sensitive API Key
 func maskAPIKey(key string) string {
 	if key == "" {
-		return fmt.Sprintf("%s[NOT SET - Edit ~/.nooty/config.json]%s", Red, Reset)
+		return fmt.Sprintf("%s[NOT SET - Use /config]%s", Red, Reset)
 	}
 	if len(key) <= 12 {
 		return "••••••••••••"
@@ -219,9 +247,9 @@ func maskAPIKey(key string) string {
 	return key[:8] + "••••••••" + key[len(key)-4:]
 }
 
-// Claude Code Style Beautiful ASCII Banner & Info Box
+// Claude Code Style Banner & System Dashboard
 func renderHeader() {
-	fmt.Print("\033[H\033[2J") // Clear screen
+	fmt.Print("\033[H\033[2J") // Clear terminal screen
 	asciiLogo := `
   _  _  ___   ___  _____ __   __  ___  _     ___ 
  | \| |/ _ \ / _ \|_   _|\ \ / / / __|| |   |_ _|
@@ -239,7 +267,6 @@ func renderHeader() {
 	}
 	fmt.Printf("%s├%s┤%s\n", Cyan, line, Reset)
 
-	// Meta Information Section
 	provider := state.Config.BaseURL
 	if strings.Contains(provider, "openrouter") {
 		provider = "OpenRouter AI (" + provider + ")"
@@ -253,11 +280,11 @@ func renderHeader() {
 		Cyan, Reset,
 		Bold, Reset, Green, state.Mode, Reset,
 		Bold, Reset, Yellow, state.Config.Safety, Reset,
-		Bold, Reset, width-44, state.Config.CustomDNS,
+		Bold, Reset, width-44, state.Config.ActiveDNS,
 		Cyan, Reset,
 	)
 	fmt.Printf("%s└%s┘%s\n", Cyan, line, Reset)
-	fmt.Printf("%sType %s/help%s for system commands | %s/model%s to switch AI models.\n\n", Dim+Yellow, Bold, Reset+Dim, Bold, Reset)
+	fmt.Printf("%sType %s/help%s for commands | %s/config%s for settings | %s/model%s to switch AI.\n\n", Dim+Yellow, Bold, Reset+Dim, Bold, Reset+Dim, Bold, Reset)
 }
 
 func truncatePath(p string, max int) string {
@@ -267,21 +294,25 @@ func truncatePath(p string, max int) string {
 	return "..." + p[len(p)-max+3:]
 }
 
-// Slash Command Router
+// Command Handler
 func handleCommand(input string, scanner *bufio.Scanner) {
 	parts := strings.Fields(input)
 	cmd := parts[0]
 
 	switch cmd {
 	case "/help":
-		fmt.Println(Bold + "\n─── Nooty CLI Commands ───" + Reset)
-		fmt.Println("  /model             - Interactively select or search AI models")
-		fmt.Println("  /mode chat|cli     - Switch between Conversation & Agent CLI Mode")
-		fmt.Println("  /workspace set|show- Manage workspace target directory")
-		fmt.Println("  /memory list|add   - Manage local smart memories")
+		fmt.Println(Bold + "\n─── Nooty CLI System Commands ───" + Reset)
+		fmt.Println("  /config            - Interactively configure API Key & Base URL")
+		fmt.Println("  /model             - Select or change AI models")
+		fmt.Println("  /mode chat|cli     - Switch between Chat Mode & Autonomous CLI Agent Mode")
+		fmt.Println("  /workspace set|show- Set target project directory")
+		fmt.Println("  /memory list|add   - Manage local smart context memories")
 		fmt.Println("  /doctor            - Run Network & Anti-Sanction Smart DNS test")
-		fmt.Println("  /clear             - Refresh terminal screen & status banner")
+		fmt.Println("  /clear             - Refresh terminal screen & status header")
 		fmt.Println("  /exit              - Exit NootyCLI\n")
+
+	case "/config":
+		configureSystemInteractive(scanner)
 
 	case "/model":
 		selectModelInteractive(scanner)
@@ -329,7 +360,55 @@ func handleCommand(input string, scanner *bufio.Scanner) {
 	}
 }
 
-// Interactive Model Picker
+// Interactive Configuration Manager (/config)
+func configureSystemInteractive(scanner *bufio.Scanner) {
+	fmt.Println(Bold + "\n─── System Interactive Settings ───" + Reset)
+
+	// 1. API Key Input
+	fmt.Printf("Current API Key: %s\n", maskAPIKey(state.Config.APIKey))
+	fmt.Print(Yellow + "Enter new API Key (press Enter to keep current): " + Reset)
+	if scanner.Scan() {
+		newKey := strings.TrimSpace(scanner.Text())
+		if newKey != "" {
+			state.Config.APIKey = newKey
+		}
+	}
+
+	// 2. Base URL Input
+	fmt.Printf("\nCurrent Base URL: %s\n", state.Config.BaseURL)
+	fmt.Println("Presets:")
+	fmt.Println("  [1] OpenRouter AI (https://openrouter.ai/api/v1)")
+	fmt.Println("  [2] DeepSeek Direct (https://api.deepseek.com/v1)")
+	fmt.Println("  [3] Local Ollama (http://localhost:11434/v1)")
+	fmt.Println("  [4] Custom URL")
+	fmt.Print(Yellow + "Select option or press Enter to keep current: " + Reset)
+
+	if scanner.Scan() {
+		choice := strings.TrimSpace(scanner.Text())
+		switch choice {
+		case "1":
+			state.Config.BaseURL = "https://openrouter.ai/api/v1"
+		case "2":
+			state.Config.BaseURL = "https://api.deepseek.com/v1"
+		case "3":
+			state.Config.BaseURL = "http://localhost:11434/v1"
+		case "4":
+			fmt.Print("Enter custom Base URL: ")
+			if scanner.Scan() {
+				customURL := strings.TrimSpace(scanner.Text())
+				if customURL != "" {
+					state.Config.BaseURL = customURL
+				}
+			}
+		}
+	}
+
+	saveConfig()
+	renderHeader()
+	fmt.Printf("%s[✓] Configuration updated successfully!%s\n\n", Green, Reset)
+}
+
+// Model Selector
 func selectModelInteractive(scanner *bufio.Scanner) {
 	fmt.Println(Bold + "\n─── Select AI Model ───" + Reset)
 	for idx, m := range presetModels {
@@ -339,7 +418,7 @@ func selectModelInteractive(scanner *bufio.Scanner) {
 		}
 		fmt.Printf("  [%d] %s %-35s %s(%s)%s\n", idx+1, selectedMarker, m.Name, Dim, m.ID, Reset)
 	}
-	fmt.Printf("  [%d] Custom Model ID (Type manually)\n", len(presetModels)+1)
+	fmt.Printf("  [%d] Custom Model ID\n", len(presetModels)+1)
 
 	fmt.Printf("\n%sSelect option (1-%d): %s", Yellow, len(presetModels)+1, Reset)
 	if scanner.Scan() {
@@ -359,16 +438,15 @@ func selectModelInteractive(scanner *bufio.Scanner) {
 					state.Config.Model = customID
 					saveConfig()
 					renderHeader()
-					fmt.Printf("%s[✓] Custom model set to: %s%s\n\n", Green, state.Config.Model, Reset)
+					fmt.Printf("%s[✓] Model set to: %s%s\n\n", Green, state.Config.Model, Reset)
 					return
 				}
 			}
 		}
 	}
-	fmt.Println("No changes made.")
 }
 
-// Local Memory Subsystem
+// Memory System
 func handleMemoryCommands(parts []string) {
 	if len(parts) < 2 {
 		fmt.Println(Yellow + "Usage: /memory list | /memory add <content>" + Reset)
@@ -377,7 +455,7 @@ func handleMemoryCommands(parts []string) {
 
 	switch parts[1] {
 	case "list":
-		fmt.Println(Bold + "\n─── Stored Local Smart Memories ───" + Reset)
+		fmt.Println(Bold + "\n─── Stored Smart Memories ───" + Reset)
 		if len(state.Memories) == 0 {
 			fmt.Println("No memories saved yet.")
 		}
@@ -403,20 +481,20 @@ func handleMemoryCommands(parts []string) {
 	}
 }
 
-// AI Engine Query Processor
-func processAIQuery(input string) {
+// Autonomous Agent AI Processing Loop
+func processAIQueryAutonomous(input string, scanner *bufio.Scanner) {
 	if state.Config.APIKey == "" {
-		fmt.Printf("%s[!] API Key missing. Set NOOTY_API_KEY environment variable or edit ~/.nooty/config.json%s\n", Red, Reset)
+		fmt.Printf("%s[!] API Key missing. Run /config to set your key.%s\n", Red, Reset)
 		return
 	}
 
-	systemPrompt := "You are Nooty, a senior developer AI assistant."
+	systemPrompt := "You are Nooty, an expert senior developer AI assistant."
 	if state.Mode == "cli" {
-		systemPrompt = fmt.Sprintf("You are NootyCLI Agent operating in workspace: %s. Use tools to read/write files or execute commands as requested.", state.Workspace)
+		systemPrompt = fmt.Sprintf("You are NootyCLI, an autonomous developer agent operating in workspace: %s. Use tools to inspect files, execute terminal commands, and solve problems iteratively until the task is complete.", state.Workspace)
 	}
 
 	if len(state.Memories) > 0 {
-		systemPrompt += "\n\nUser Preferences & Context Memories:"
+		systemPrompt += "\n\nUser Context Memories:"
 		for _, m := range state.Memories {
 			systemPrompt += fmt.Sprintf("\n- %s", m.Content)
 		}
@@ -428,57 +506,70 @@ func processAIQuery(input string) {
 	messages = append(messages, state.SessionHistory...)
 	messages = append(messages, Message{Role: "user", Content: input})
 
-	reqBody := ChatCompletionReq{
-		Model:    state.Config.Model,
-		Messages: messages,
-	}
-
-	if state.Mode == "cli" {
-		reqBody.Tools = getAvailableTools()
-	}
-
-	fmt.Printf("%s⚡ Nooty thinking...%s\r", Dim+Cyan, Reset)
-	resp, err := callNootyAPI(reqBody)
-	if err != nil {
-		fmt.Printf("%s[!] API Error: %v%s\n", Red, err, Reset)
-		return
-	}
-
-	if resp.Error != nil {
-		fmt.Printf("%s[!] Provider Error: %s%s\n", Red, resp.Error.Message, Reset)
-		return
-	}
-
-	if len(resp.Choices) == 0 {
-		fmt.Printf("%s[!] Received empty response.%s\n", Red, Reset)
-		return
-	}
-
-	aiMsg := resp.Choices[0].Message
-
-	// Handle Agent Tools Call
-	if len(aiMsg.ToolCalls) > 0 {
-		state.SessionHistory = append(state.SessionHistory, Message{Role: "user", Content: input})
-		state.SessionHistory = append(state.SessionHistory, aiMsg)
-
-		for _, tool := range aiMsg.ToolCalls {
-			executeToolCall(tool)
+	// Autonomous Loop
+	for loopCount := 0; loopCount < 10; loopCount++ {
+		reqBody := ChatCompletionReq{
+			Model:    state.Config.Model,
+			Messages: messages,
 		}
-	} else {
-		fmt.Printf("\n%sNooty:%s %s\n\n", Bold+Green, Reset, aiMsg.Content)
+
+		if state.Mode == "cli" {
+			reqBody.Tools = getAvailableTools()
+		}
+
+		fmt.Printf("%s⚡ Nooty thinking...%s\r", Dim+Cyan, Reset)
+		resp, err := callNootyAPI(reqBody)
+		if err != nil {
+			fmt.Printf("%s[!] API Request Error: %v%s\n", Red, err, Reset)
+			return
+		}
+
+		if resp.Error != nil {
+			fmt.Printf("%s[!] Provider API Error: %s%s\n", Red, resp.Error.Message, Reset)
+			return
+		}
+
+		if len(resp.Choices) == 0 {
+			fmt.Printf("%s[!] Received empty response from model.%s\n", Red, Reset)
+			return
+		}
+
+		aiMsg := resp.Choices[0].Message
+		messages = append(messages, aiMsg)
+
+		// Check if AI requested tool calls
+		if len(aiMsg.ToolCalls) > 0 {
+			for _, tool := range aiMsg.ToolCalls {
+				toolResult := executeToolCallAutonomous(tool, scanner)
+				toolMsg := Message{
+					Role:       "tool",
+					ToolCallID: tool.ID,
+					Content:    toolResult,
+				}
+				messages = append(messages, toolMsg)
+			}
+			// Loop continues: feed tool results back to AI!
+			continue
+		}
+
+		// AI completed its task and gave final answer
+		if aiMsg.Content != "" {
+			fmt.Printf("\n%sNooty:%s %s\n\n", Bold+Green, Reset, aiMsg.Content)
+		}
+
 		state.SessionHistory = append(state.SessionHistory, Message{Role: "user", Content: input})
 		state.SessionHistory = append(state.SessionHistory, aiMsg)
+		break
 	}
 }
 
-// Tool Definitions
 func getAvailableTools() []Tool {
 	return []Tool{
 		{
 			Type: "function",
 			Function: ToolDefInReq{
 				Name:        "list_files",
-				Description: "List files inside workspace",
+				Description: "List files inside the current workspace path",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -491,7 +582,7 @@ func getAvailableTools() []Tool {
 			Type: "function",
 			Function: ToolDefInReq{
 				Name:        "read_file",
-				Description: "Read file content",
+				Description: "Read file contents",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -519,22 +610,8 @@ func getAvailableTools() []Tool {
 		{
 			Type: "function",
 			Function: ToolDefInReq{
-				Name:        "delete_file",
-				Description: "Delete a file",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"path": map[string]interface{}{"type": "string"},
-					},
-					"required": []string{"path"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: ToolDefInReq{
 				Name:        "run_command",
-				Description: "Execute shell command",
+				Description: "Execute a terminal shell command",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -547,13 +624,13 @@ func getAvailableTools() []Tool {
 	}
 }
 
-// Agent Tool Execution Dispatcher
-func executeToolCall(tool ToolCall) {
+// Execute Tool Calls & Return Output to AI Loop
+func executeToolCallAutonomous(tool ToolCall, scanner *bufio.Scanner) string {
 	fnName := tool.Function.Name
 	var args map[string]string
 	_ = json.Unmarshal([]byte(tool.Function.Arguments), &args)
 
-	fmt.Printf("\n%s➔ Agent Tool Call:%s %s%s%s\n", Magenta, Reset, Bold, fnName, Reset)
+	fmt.Printf("\n%s➔ Agent Executing Tool:%s %s%s%s\n", Magenta, Reset, Bold, fnName, Reset)
 
 	switch fnName {
 	case "list_files":
@@ -561,8 +638,7 @@ func executeToolCall(tool ToolCall) {
 		fullPath := filepath.Join(state.Workspace, relPath)
 		entries, err := os.ReadDir(fullPath)
 		if err != nil {
-			sendToolResult(tool.ID, fmt.Sprintf("Error: %v", err))
-			return
+			return fmt.Sprintf("Error listing files: %v", err)
 		}
 		var list []string
 		for _, e := range entries {
@@ -572,72 +648,58 @@ func executeToolCall(tool ToolCall) {
 			}
 			list = append(list, fmt.Sprintf("%s %s", t, e.Name()))
 		}
-		sendToolResult(tool.ID, strings.Join(list, "\n"))
+		out := strings.Join(list, "\n")
+		fmt.Printf("   Found %d entries.\n", len(entries))
+		return out
 
 	case "read_file":
 		relPath := args["path"]
 		fullPath := filepath.Join(state.Workspace, relPath)
 		content, err := os.ReadFile(fullPath)
 		if err != nil {
-			sendToolResult(tool.ID, fmt.Sprintf("Error: %v", err))
-			return
+			return fmt.Sprintf("Error reading file: %v", err)
 		}
-		fmt.Printf("   Reading: %s%s%s (%d bytes)\n", Cyan, relPath, Reset, len(content))
-		sendToolResult(tool.ID, string(content))
+		fmt.Printf("   Read %s (%d bytes)\n", relPath, len(content))
+		return string(content)
 
 	case "write_file":
 		relPath := args["path"]
 		content := args["content"]
 		fullPath := filepath.Join(state.Workspace, relPath)
 
-		fmt.Printf("   Target: %s%s%s\n", Yellow, relPath, Reset)
-		if askApproval("Allow writing to this file?") {
+		fmt.Printf("   Target File: %s%s%s\n", Yellow, relPath, Reset)
+		if askApprovalInteractive("Allow write to file?", scanner) {
 			_ = os.MkdirAll(filepath.Dir(fullPath), 0755)
 			err := os.WriteFile(fullPath, []byte(content), 0644)
 			if err != nil {
-				sendToolResult(tool.ID, fmt.Sprintf("Error: %v", err))
-			} else {
-				fmt.Printf("%s[✓] File written successfully.%s\n", Green, Reset)
-				sendToolResult(tool.ID, "File written successfully.")
+				return fmt.Sprintf("Error writing file: %v", err)
 			}
-		} else {
-			sendToolResult(tool.ID, "User denied write approval.")
+			fmt.Printf("%s[✓] File written successfully.%s\n", Green, Reset)
+			return "File written successfully."
 		}
-
-	case "delete_file":
-		relPath := args["path"]
-		fullPath := filepath.Join(state.Workspace, relPath)
-		fmt.Printf("%s⚠️ Warning: Delete %s%s\n", Red, relPath, Reset)
-		if askApproval("Confirm DELETE file?") {
-			err := os.Remove(fullPath)
-			if err != nil {
-				sendToolResult(tool.ID, fmt.Sprintf("Error: %v", err))
-			} else {
-				fmt.Printf("%s[✓] File deleted.%s\n", Green, Reset)
-				sendToolResult(tool.ID, "File deleted successfully.")
-			}
-		} else {
-			sendToolResult(tool.ID, "User denied delete.")
-		}
+		return "User denied write approval."
 
 	case "run_command":
 		cmdStr := args["command"]
-		executeShellCommand(cmdStr)
+		fmt.Printf("   Command: %s%s%s\n", Yellow, cmdStr, Reset)
+		if askApprovalInteractive("Allow executing command?", scanner) {
+			cmd := exec.Command("bash", "-c", cmdStr)
+			cmd.Dir = state.Workspace
+			out, err := cmd.CombinedOutput()
+			fmt.Printf("\n%s--- Execution Output ---%s\n%s\n", Dim, Reset, string(out))
+			if err != nil {
+				return fmt.Sprintf("Command failed with error: %v. Output: %s", err, string(out))
+			}
+			return string(out)
+		}
+		return "User denied command execution."
 	}
+
+	return "Unknown tool name"
 }
 
-func sendToolResult(toolID string, result string) {
-	toolMsg := Message{
-		Role:       "tool",
-		ToolCallID: toolID,
-		Content:    result,
-	}
-	state.SessionHistory = append(state.SessionHistory, toolMsg)
-}
-
-func askApproval(prompt string) bool {
+func askApprovalInteractive(prompt string, scanner *bufio.Scanner) bool {
 	fmt.Printf("%s[?] %s [y/N]: %s", Yellow, prompt, Reset)
-	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
 		ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
 		return ans == "y" || ans == "yes"
@@ -646,65 +708,65 @@ func askApproval(prompt string) bool {
 }
 
 func executeShellCommand(cmdStr string) {
-	fmt.Printf("%s➔ Execute Command:%s %s%s%s\n", Yellow, Reset, Bold, cmdStr, Reset)
-	if !askApproval("Allow running command?") {
-		fmt.Println("Command cancelled.")
-		return
-	}
-
+	fmt.Printf("%s➔ Executing Shell Command:%s %s%s%s\n", Yellow, Reset, Bold, cmdStr, Reset)
 	cmd := exec.Command("bash", "-c", cmdStr)
 	cmd.Dir = state.Workspace
 	out, err := cmd.CombinedOutput()
-
 	fmt.Printf("\n%s--- Output ---%s\n%s\n", Dim, Reset, string(out))
 	if err != nil {
 		fmt.Printf("%s[!] Command failed: %v%s\n", Red, err, Reset)
 	}
 }
 
-// Connection Doctor & Smart DNS Diagnostic
+// Connection Doctor & Triple Anti-Sanction DNS Pool Tester
 func runConnectionDoctor() {
 	fmt.Println(Bold + "\n─── Network & Anti-Sanction Diagnostic ───" + Reset)
-	fmt.Printf("1. Target Provider Endpoint: %s\n", state.Config.BaseURL)
+	fmt.Printf("1. Testing Provider Endpoint: %s\n", state.Config.BaseURL)
 
-	client := http.Client{Timeout: 5 * time.Second}
+	client := http.Client{Timeout: 4 * time.Second}
 	_, err := client.Get(state.Config.BaseURL)
 	if err == nil {
-		fmt.Printf("%s[✓] Direct Connection Healthy! No blocks detected.%s\n\n", Green, Reset)
+		fmt.Printf("%s[✓] Direct Connection Healthy! No sanctions detected.%s\n\n", Green, Reset)
 		return
 	}
 
-	fmt.Printf("%s[!] Direct test failed: %v%s\n", Yellow, err, Reset)
-	fmt.Println("2. Testing Smart DNS Anti-Sanction Route...")
+	fmt.Printf("%s[!] Direct connection blocked or slow. Testing Anti-Sanction DNS Pool...%s\n\n", Yellow, Reset)
 
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			resolver := &net.Resolver{
-				PreferGo: true,
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					return dialer.DialContext(ctx, "udp", state.Config.CustomDNS+":53")
-				},
-			}
-			host, port, _ := net.SplitHostPort(addr)
-			ips, err := resolver.LookupHost(ctx, host)
-			if err != nil || len(ips) == 0 {
-				return dialer.DialContext(ctx, network, addr)
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
-		},
-	}
+	for _, dns := range dnsPool {
+		fmt.Printf(" Testing %s DNS (%s)... ", dns.Name, dns.IP)
+		dialer := &net.Dialer{Timeout: 3 * time.Second}
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				resolver := &net.Resolver{
+					PreferGo: true,
+					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+						return dialer.DialContext(ctx, "udp", dns.IP+":53")
+					},
+				}
+				host, port, _ := net.SplitHostPort(addr)
+				ips, err := resolver.LookupHost(ctx, host)
+				if err != nil || len(ips) == 0 {
+					return dialer.DialContext(ctx, network, addr)
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+			},
+		}
 
-	smartClient := http.Client{Transport: transport, Timeout: 5 * time.Second}
-	_, err = smartClient.Get(state.Config.BaseURL)
-	if err == nil {
-		fmt.Printf("%s[✓] Smart DNS (%s) route working! Anti-sanction ready.%s\n\n", Green, state.Config.CustomDNS, Reset)
-	} else {
-		fmt.Printf("%s[!] Anti-sanction route failed. Verify Internet/DNS config.%s\n\n", Red, Reset)
+		smartClient := http.Client{Transport: transport, Timeout: 4 * time.Second}
+		_, err := smartClient.Get(state.Config.BaseURL)
+		if err == nil {
+			fmt.Printf("%s[✓] ACTIVE & WORKING!%s\n", Green, Reset)
+			state.Config.ActiveDNS = fmt.Sprintf("%s (%s)", dns.Name, dns.IP)
+			saveConfig()
+			renderHeader()
+			return
+		}
+		fmt.Printf("%s[FAILED]%s\n", Red, Reset)
 	}
+	fmt.Printf("\n%s[!] All Anti-Sanction DNS routes failed. Check network connection.%s\n\n", Red, Reset)
 }
 
-// HTTP API Requester
+// HTTP API Request Engine
 func callNootyAPI(reqBody ChatCompletionReq) (*ChatCompletionResp, error) {
 	jsonBytes, _ := json.Marshal(reqBody)
 	baseURL := strings.TrimSuffix(state.Config.BaseURL, "/")
@@ -721,7 +783,7 @@ func callNootyAPI(reqBody ChatCompletionReq) (*ChatCompletionResp, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", state.Config.APIKey))
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 90 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -734,7 +796,7 @@ func callNootyAPI(reqBody ChatCompletionReq) (*ChatCompletionResp, error) {
 	return &compResp, err
 }
 
-// File Storage Helpers
+// Storage Helpers
 func saveConfig() {
 	data, _ := json.MarshalIndent(state.Config, "", "  ")
 	_ = os.WriteFile(filepath.Join(state.NootyDir, "config.json"), data, 0644)
