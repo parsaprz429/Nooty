@@ -1,8 +1,8 @@
-// nooty.go — Nooty v0.2.0 "Radin" – Minimal, Agentic, Open‑Source
+// nooty.go — Nooty v0.2.0 "Radin" – Professional Terminal Agent
 // Single‑file, zero dependencies, macOS & Linux.
 //
-// 🚀 One‑line install:
-//   cd ~ && curl -O https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/0.2.0/nooty.go && go run nooty.go
+// 🚀 One‑line install with the companion install.sh:
+//   curl -fsSL https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/0.2.0/install.sh | bash
 //
 // 🌍 Anti‑sanction DNS fallback:
 //   Shecan (178.22.122.100, 185.51.200.2) & Begzar (185.55.226.26, …)
@@ -42,24 +42,9 @@ const (
 	yellow = "\033[33m"
 	blue   = "\033[34m"
 	cyan   = "\033[36m"
+	magenta = "\033[35m"
+	white  = "\033[97m"
 )
-
-const banner = `
-███╗   ██╗ ██████╗  ██████╗ ████████╗██╗   ██╗
-████╗  ██║██╔═══██╗██╔═══██╗╚══██╔══╝╚██╗ ██╔╝
-██╔██╗ ██║██║   ██║██║   ██║   ██║    ╚████╔╝ 
-██║╚██╗██║██║   ██║██║   ██║   ██║     ╚██╔╝  
-██║ ╚████║╚██████╔╝╚██████╔╝   ██║      ██║   
-╚═╝  ╚═══╝ ╚═════╝  ╚═════╝    ╚═╝      ╚═╝   
-                                               
-███╗   ██╗ ██████╗  ██████╗ ████████╗██╗   ██╗
-████╗  ██║██╔═══██╗██╔═══██╗╚══██╔══╝╚██╗ ██╔╝
-██╔██╗ ██║██║   ██║██║   ██║   ██║    ╚████╔╝ 
-██║╚██╗██║██║   ██║██║   ██║   ██║     ╚██╔╝  
-██║ ╚████║╚██████╔╝╚██████╔╝   ██║      ██║   
-╚═╝  ╚═══╝ ╚═════╝  ╚═════╝    ╚═╝      ╚═╝   
-===============================================
-`
 
 // ---------- Data structures ----------
 type Config struct {
@@ -96,6 +81,11 @@ type ChatStreamChunk struct {
 	} `json:"choices"`
 }
 
+type ToolCall struct {
+	Name string
+	Args map[string]string
+}
+
 // ---------- Global state ----------
 var (
 	config          Config
@@ -108,7 +98,7 @@ var (
 	memFile         string
 	configFile      string
 
-	// DNS fallback resolvers
+	// DNS fallback resolvers (tried in order)
 	fallbackDNS = []string{
 		"",                    // system default
 		"185.51.200.2",        // Shecan
@@ -147,22 +137,36 @@ func main() {
 	}
 	workspace = config.Workspace
 
-	// Beautiful header
-	fmt.Print(cyan + banner + reset)
-	fmt.Printf("%sNootyCLI v0.2.0 — Radin%s\n\n", bold, reset)
-	printHeaderInfo()
-	fmt.Println("\nType /help for commands.\n")
+	// Draw professional header
+	drawHeader()
+	fmt.Println()
 
 	repl()
 }
 
-func printHeaderInfo() {
+func drawHeader() {
+	// Box drawing with Unicode characters
+	boxTop := "╔══════════════════════════════════════════════════════════════╗"
+	boxMid := "║"
+	boxBot := "╚══════════════════════════════════════════════════════════════╝"
+	line := "╟──────────────────────────────────────────────────────────────╢"
+
+	fmt.Println(cyan + boxTop + reset)
+	fmt.Printf("%s  %s%s%-56s%s\n", cyan, bold+white, "NootyCLI v0.2.0 — Radin", reset, cyan, reset)
+	fmt.Println(cyan + line + reset)
 	maskedKey := maskAPIKey(config.APIKey)
-	fmt.Printf("  %sProvider:%s  %s\n", dim, reset, config.ProviderEndpoint)
-	fmt.Printf("  %sModel:    %s %s%s%s\n", dim, reset, bold, config.Model, reset)
-	fmt.Printf("  %sAPI Key:  %s %s\n", dim, reset, maskedKey)
-	fmt.Printf("  %sSafety:   %s %s\n", dim, reset, config.Safety)
-	fmt.Printf("  %sWorkspace:%s %s\n", dim, reset, workspace)
+	info := []struct{ label, value string }{
+		{"Provider", config.ProviderEndpoint},
+		{"Model", config.Model},
+		{"API Key", maskedKey},
+		{"Safety", config.Safety},
+		{"Workspace", workspace},
+	}
+	for _, item := range info {
+		fmt.Printf("%s  %s%-10s%s : %s%-38s%s\n", cyan, dim, item.label, reset, bold, item.value, reset, cyan, reset)
+	}
+	fmt.Println(cyan + boxBot + reset)
+	fmt.Printf("\nType %s/help%s for commands.\n\n", green, reset)
 }
 
 func maskAPIKey(key string) string {
@@ -200,9 +204,9 @@ func repl() {
 
 func prompt() string {
 	if currentMode == "cli" {
-		return fmt.Sprintf("%snooty[cli]%s > ", cyan, reset)
+		return fmt.Sprintf("%s🔧 nooty[cli]%s > ", cyan, reset)
 	}
-	return fmt.Sprintf("%snooty%s > ", green, reset)
+	return fmt.Sprintf("%s⚡ nooty%s > ", green, reset)
 }
 
 // ---------- Slash commands ----------
@@ -253,7 +257,7 @@ func handleSlashCommand(cmd string) {
 }
 
 func printHelp() {
-	fmt.Println(`Available commands:
+	fmt.Println(`Commands:
   /help                        Show this help
   /mode [chat|cli]             Switch mode
   /config                      Interactive setup (API key, provider, model)
@@ -509,7 +513,7 @@ func fetchAvailableModels() ([]string, error) {
 }
 
 func checkProviderConnection() error {
-	_, err := fetchAvailableModels() // reuse, just check reachability
+	_, err := fetchAvailableModels()
 	return err
 }
 
@@ -549,7 +553,7 @@ Available tools:
 IMPORTANT: Use EXACT format TOOL: name key=value. Wait for result before next step.`
 
 	if currentMode == "cli" {
-		sysPrompt += "\nYou are in CLI mode. Execute tools step by step."
+		sysPrompt += "\nYou are in CLI mode. Plan your actions first, then execute step by step."
 	}
 
 	relevant := getRelevantMemories(userInput)
@@ -646,8 +650,30 @@ func streamResponse(messages []Message) {
 	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fullContent.String()})
 }
 
-// ---------- Agent loop ----------
+// ---------- Agent loop with plan & approve ----------
 func runAgentLoop(messages []Message) {
+	// First, ask model for a plan
+	planPrompt := append(messages, Message{Role: "user", Content: "Before executing, provide a concise numbered plan of the actions you will take."})
+	fmt.Print(yellow + "Planning... " + reset)
+	planText, err := getModelResponseText(planPrompt)
+	if err != nil {
+		fmt.Printf("%sFailed to generate plan: %v%s\n", red, err, reset)
+		return
+	}
+	fmt.Print(cyan + planText + reset + "\n")
+	fmt.Print("Proceed with this plan? [y/N] ")
+	reader := bufio.NewReader(os.Stdin)
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm != "y" && confirm != "yes" {
+		fmt.Println("Aborted.")
+		return
+	}
+
+	// Add plan approval to context
+	messages = append(messages, Message{Role: "assistant", Content: planText})
+	messages = append(messages, Message{Role: "user", Content: "Plan approved. Execute step by step."})
+
 	msgs := messages
 	for i := 0; i < 10; i++ {
 		respText, err := getModelResponseText(msgs)
@@ -731,7 +757,7 @@ func extractToolCall(text string) *ToolCall {
 			return parseToolLine(line)
 		}
 	}
-	re := regexp.MustCompile(`(?i)(?:```)?\s*TOOL:\s*(\w+)\s+(.*?)(?:```)?$`)
+	re := regexp.MustCompile(`(?i)(?:` + "```" + `)?\s*TOOL:\s*(\w+)\s+(.*?)(?:` + "```" + `)?$`)
 	matches := re.FindStringSubmatch(text)
 	if len(matches) >= 3 {
 		return parseToolArgs(matches[1], matches[2])
@@ -764,11 +790,11 @@ func parseToolArgs(name, argsStr string) *ToolCall {
 			key := match[1]
 			value := match[2]
 			if (strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)) ||
-				(strings.HasPrefix(value, `'`) && strings.HasSuffix(value, `'`)) {
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
 				value = value[1 : len(value)-1]
 			}
-			value = strings.ReplaceAll(value, `\n`, "\n")
-			value = strings.ReplaceAll(value, `\t`, "\t")
+			value = strings.ReplaceAll(value, "\\n", "\n")
+			value = strings.ReplaceAll(value, "\\t", "\t")
 			args[key] = value
 		}
 	}
@@ -787,11 +813,6 @@ func parseToolArgs(name, argsStr string) *ToolCall {
 		}
 	}
 	return &ToolCall{Name: name, Args: args}
-}
-
-type ToolCall struct {
-	Name string
-	Args map[string]string
 }
 
 func executeAgentTool(tc *ToolCall) (string, bool) {
