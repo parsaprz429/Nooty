@@ -9,7 +9,7 @@ set -e
 
 # ---------- Configuration ----------
 VERSION="0.2.2"
-SOURCE_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/nooty.go"
+SOURCE_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/0.2.2/nooty.go"
 BINARY_NAME="nooty"
 TEMP_DIR="/tmp/nooty-install-$$"
 
@@ -30,20 +30,6 @@ else
 fi
 
 # ---------- UI Helpers ----------
-spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    while [ "$(ps a | awk '{print $1}' | grep "$pid")" ]; do
-        local temp=${spinstr#?}
-        printf " ${CYAN}%c${NC}  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b"
-    done
-    printf "    \b\b\b\b"
-}
-
 print_banner() {
     clear 2>/dev/null || true
     echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
@@ -90,27 +76,27 @@ success "System identified: ${BOLD}${OS_DISPLAY} (${ARCH})${NC}"
 
 # 2. Dependency Check (Go Language Engine)
 info "Checking Go toolchain requirement..."
-if command -v go &>/dev/null; then
+if command -v go >/dev/null 2>&1; then
     GO_VER="$(go version | awk '{print $3}')"
     success "Found Go Engine: ${BOLD}${GO_VER}${NC}"
 else
     warn "Go toolchain not found. Attempting automatic installation..."
     if [ "$OS" = "Darwin" ]; then
-        if ! command -v brew &>/dev/null; then
+        if ! command -v brew >/dev/null 2>&1; then
             info "Installing Homebrew..."
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         fi
         brew install go
     elif [ "$OS" = "Linux" ]; then
-        if command -v apt-get &>/dev/null; then
+        if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update -qq && sudo apt-get install -y -qq golang-go
-        elif command -v dnf &>/dev/null; then
+        elif command -v dnf >/dev/null 2>&1; then
             sudo dnf install -y golang
-        elif command -v yum &>/dev/null; then
+        elif command -v yum >/dev/null 2>&1; then
             sudo yum install -y golang
-        elif command -v pacman &>/dev/null; then
+        elif command -v pacman >/dev/null 2>&1; then
             sudo pacman -S --noconfirm go
-        elif command -v zypper &>/dev/null; then
+        elif command -v zypper >/dev/null 2>&1; then
             sudo zypper install -y go
         else
             error "Could not auto-install Go. Please install Go manually: https://go.dev/doc/install"
@@ -124,23 +110,23 @@ mkdir -p "$TEMP_DIR"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # 4. Fetch Latest NootyCLI Source Code
-echo -n -e " ${BLUE}ℹ${NC} Downloading latest NootyCLI core source code..."
-(curl -fsSL "$SOURCE_URL" -o "$TEMP_DIR/nooty.go") &
-spinner $!
+info "Downloading NootyCLI source code (v${VERSION})..."
+if ! curl -fsSL "$SOURCE_URL" -o "$TEMP_DIR/nooty.go"; then
+    # Fallback to main folder if version folder is missing
+    FALLBACK_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/nooty.go"
+    curl -fsSL "$FALLBACK_URL" -o "$TEMP_DIR/nooty.go" || error "Failed to download NootyCLI source from GitHub."
+fi
 
 if [ ! -s "$TEMP_DIR/nooty.go" ]; then
-    echo
-    error "Failed to download NootyCLI source from GitHub repository."
+    error "Downloaded source file is empty."
 fi
 success "Source code downloaded successfully."
 
 # 5. Compile Binary Engine
-echo -n -e " ${BLUE}ℹ${NC} Compiling binary executable with optimizations..."
-(cd "$TEMP_DIR" && go build -ldflags="-s -w" -o "$BINARY_NAME" nooty.go) &
-spinner $!
+info "Compiling binary executable with optimizations..."
+(cd "$TEMP_DIR" && go build -ldflags="-s -w" -o "$BINARY_NAME" nooty.go)
 
 if [ ! -f "$TEMP_DIR/$BINARY_NAME" ]; then
-    echo
     error "Compilation failed. Please check your Go environment."
 fi
 success "Build completed successfully!"
@@ -150,7 +136,7 @@ TARGET_DIR="/usr/local/bin"
 USE_SUDO=false
 
 if [ ! -w "$TARGET_DIR" ]; then
-    if command -v sudo &>/dev/null && [ -w "/tmp" ]; then
+    if command -v sudo >/dev/null 2>&1 && [ -w "/tmp" ]; then
         USE_SUDO=true
     else
         TARGET_DIR="$HOME/.local/bin"
@@ -170,7 +156,7 @@ fi
 
 success "Binary installed successfully to ${TARGET_DIR}/${BINARY_NAME}"
 
-# 7. Initialize User Workspace & Directory
+# 7. Initialize User Workspace
 NOOTY_HOME="$HOME/.nooty"
 mkdir -p "$NOOTY_HOME/chats"
 
@@ -185,7 +171,7 @@ if [ "$TARGET_DIR" = "$HOME/.local/bin" ]; then
     esac
 fi
 
-# ---------- Completion Header ----------
+# ---------- Completion Banner ----------
 echo
 echo -e "${GREEN}┌──────────────────────────────────────────────────────────┐${NC}"
 echo -e "${GREEN}│ ${BOLD}🎉 NootyCLI v${VERSION} has been successfully installed!     ${NC}${GREEN}│${NC}"
