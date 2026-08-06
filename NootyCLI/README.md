@@ -4,7 +4,7 @@
 ### ⚡ نخستین کد ایجنت هوشمند، بومی و ضدتحریم ترمینال در ایران ⚡
 #### *The First Iranian Anti-Sanction Agentic Terminal Intelligence*
 
-🌐 **[وب‌سایت رسمی (cli.nooty.ir)](https://cli.nooty.ir)** &nbsp;|&nbsp; 📧 **پشتیبانی:** `support@nooty.ir`
+🌐 **[وب‌سایت رسمی (cli.nooty.ir)](https://cli.nooty.ir)** &nbsp;|&nbsp; 📧 **پشتیبانی:** `support@nooty.ir` & `info@nooty.ir`
 
 ---
 
@@ -17,70 +17,70 @@
 
 ---
 
-## 🎯 هدف پروژه (Our Mission)
+## 🎯 هدف پروژه
 
 **NootyCLI** با هدف ارائه یک **دستیار کدنویسی خودکار و عاملیت‌محور (Code Agent)** ویژه برنامه‌نویسان و توسعه‌دهندگان ایرانی خلق شده است. این ابزار بدون نیاز به ابزارهای تغییر آی‌پی یا وابستگی‌های سنگین، ترمینال شما را به یک محیط هوشمند تبدیل می‌کند تا بتوانید ساختار پروژه‌ها را تحلیل، فایل‌ها را ویرایش و دستورات شل را با الگوی **Plan & Execute** به صورت کاملاً خودکار و هوشمند اجرا کنید. 🚀✨
 
 ---
 
-## ✨ قابلیت‌های برجسته (Key Features)
+## ✨ قابلیت‌های برجسته
 
 - 🧠 **موتور عاملیت هوشمند (Agentic Plan & Execute):** تفکیک برنامه‌ریزی و اجرا؛ ارائه نقشه‌راه شفاف قبل از اجرای هر دستور و دریافت تاییدیه از کاربر.
 - 🛡️ **سپر ضد تحریم بومی (Zero-Config DNS Shield):** زنجیره خودکار Fallback روی دی‌ان‌اس‌های `Electro` ،`Shecan` و `Begzar` در صورت قطع ارتباط یا خطاهای ۴۰۳/تحریم شبکه.
 - 🛠️ **۱۱ ابزار بومی ترمینال (Built-in Tools):** پیمایش درختی پروژه‌ها، جستجوی پیشرفته کد، ویرایش خط‌به‌خط فایل‌ها، خروجی Git و اجرای امن دستورات شل با مدیریت Timeout.
-- 📦 **صفر وابستگی خارجی (Zero External Dependencies):** توسعه داده‌شده ۱۰۰٪ با کتابخانه استاندارد زبان Go جهت بالا بردن سرعت، امنیت و سهولت کامپایل.
+- 📦 **صفر وابستگی خارجی (Zero Dependencies):** توسعه داده‌شده ۱۰۰٪ با کتابخانه استاندارد زبان Go جهت بالا بردن سرعت، امنیت و سهولت کامپایل.
 - 🏥 **سیستم عیب‌یابی پزشک (`/doctor`):** دستور اختصاصی برای بررسی زنده وضعیت اتصال شبکه، سلامت کلید API و لیست مدل‌های فعال.
 
 ---
 
-## 🚀 راهنمای نصب سریع (Quick Installation)
+## 🚀 راهنمای نصب سریع
 
 کافیست دستور تک‌خطی زیر را در ترمینال **مک‌بوک (macOS)** یا **لینوکس (Linux)** خود وارد کنید:
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/install.sh?v=$(date +%s)" | bash
 
-> ⚡ **نکته هوشمند:** اسکریپت نصب به صورت خودکار معماری پردازنده شما (`arm64` یا `amd64`) را تشخیص داده، در صورت نبود کامپایلر Go آن را نصب می‌کند و فایل اجرایی بهینه‌شده را در مسیر سیستم (`/usr/local/bin/nooty`) قرار می‌دهد.
+> ⚡ **نکته:** اسکریپت نصب به صورت خودکار معماری پردازنده شما (`arm64` یا `amd64`) را تشخیص داده، در صورت نیاز کامپایلر Go را نصب کرده و فایل اجرایی را در مسیر `/usr/local/bin/nooty` قرار می‌دهد.
 
 ---
 
-## 💻 نحوه استفاده (Usage Guide)
+## 💻 نحوه استفاده
 
-### ۱. اجرا در ترمینال
+### ۱. اجرای ابزار
 bash
 nooty
 
 ### ۲. فعال‌سازی حالت عاملیتی (Agent Mode)
-برای اینکه ایجنت اجازه دسترسی به ابزارها و ویرایش پروژه را داشته باشد، دستور زیر را بزنید:
+برای اینکه ایجنت اجازه دسترسی به فایل‌ها و اجرای دستورات پروژه را داشته باشد، ابتدا وارد حالت عاملیتی شوید:
 text
-⚡ nooty ❯ /mode cli
+/mode cli
 
-### ۳. ارائه دستورات هوشمند به ایجنت
+### ۳. ارسال دستور کار به ایجنت
 text
 🤖 nooty[agent] ❯ ساختار پروژه را بررسی کن، یک فایل test.go بساز، توش Hello World بنویس و اجراش کن.
 
 ---
 
-## ⚙️ جدول دستورات و حالت‌ها (Commands)
+## ⚙️ جدول دستورات و حالت‌ها
 
-| دستور (Command) | نحوه عملکرد |
+| دستور | نحوه عملکرد |
 | :--- | :--- |
 | `/mode cli` | سوییچ به **حالت عاملیتی** (امکان اجرای ابزارها، ویرایش فایل و اجرای دستورات) |
 | `/mode chat` | سوییچ به **حالت چت معمولی** (پرسش و پاسخ متنی بدون دسترسی به فایل‌ها) |
 | `/doctor` | اجرای **عیب‌یابی زنده** سلامت شبکه، DNS Shield و دسترسی به API |
 | `/model list` | نمایش لیست مدل‌های هوش مصنوعی موجود با قابلیت انتخاب شماره‌ای |
 | `/clear` | پاک‌سازی محیط متنی ترمینال |
-| `/help` | نمایش راهنما و راهنمای دستورات |
+| `/help` | نمایش راهنما و دستورات کمکی |
 
 ---
 
-## 📬 ثبت بازخورد و گزارش خطا (Feedback & Support)
+## 📬 ثبت بازخورد و گزارش خطا
 
 این نسخه (`v0.2.2 Radin Pro`) در حال حاضر به صورت **عرضه محدود (Beta)** جهت دریافت بازخورد اولیه توسعه‌دهندگان منتشر شده است. 
 
-در صورت مشاهده هرگونه باگ، پیشنهاد یا نیاز به پشتیبانی می‌توانید از کانال‌های زیر با ما در ارتباط باشید:
+در صورت مشاهده هرگونه باگ، پیشنهاد یا نیاز به پشتیبانی می‌توانید با ما در ارتباط باشید:
 
 - 📧 **ایمیل‌های پشتیبانی رسمی:** `support@nooty.ir` | `info@nooty.ir`
-- 🌐 **وب‌سایت پروژه‌های نوتی:** [cli.nooty.ir](https://cli.nooty.ir)
+- 🌐 **وب‌سایت رسمی:** [cli.nooty.ir](https://cli.nooty.ir)
 - 🐛 **ثبت باگ در گیت‌هاب:** [GitHub Issues Section](https://github.com/parsaprz429/Nooty/issues)
 
 ---
@@ -89,13 +89,14 @@ text
 
 ## 🇬🇧 English Overview
 
-**NootyCLI** is the first Iranian anti-sanction **Code Agent** built with Pure Go (Zero External Dependencies). It transforms your terminal into an agentic AI workspace using a **Plan & Execute** system to read, write, and execute shell commands safely.
+**NootyCLI** is the first Iranian anti-sanction **Code Agent** built with Pure Go. It transforms your terminal into an agentic AI workspace using a **Plan & Execute** system to read, write, and execute shell commands safely.
 
 ### ⚡ Quick One-Line Install
 bash
 curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/install.sh?v=$(date +%s)" | bash
-- **Official Landing Page:** [cli.nooty.ir](https://cli.nooty.ir)
-- **Support Contact:** `support@nooty.ir`
+
+- **Official Website:** [cli.nooty.ir](https://cli.nooty.ir)
+- **Support:** `support@nooty.ir`
 
 ---
 
@@ -104,13 +105,3 @@ Crafted with ❤️ by <b>Parsa</b> — Powered by <b>Nooty Ecosystem</b> 🚀
 </p>
 
 </div>
-
-
----
-
-### 💡 ویژگی‌های این نسخه README:
-1. **طراحی بصری بسیار جذاب:** استفاده از Badges با استایل `for-the-badge` و آیکون‌های مدرن.
-2. **اولویت کامل به زبان فارسی:** تمام قسمت‌های اصالت پروژه، آموزش، جدول دستورات و اهداف به زبان فارسی روان و شیک نوشته شده و انگلیسی در انتهای صفحه قرار گرفته است.
-3. **لینک‌دهی هوشمند:** آدرس `cli.nooty.ir` و ایمیل‌های `support@nooty.ir` و `info@nooty.ir` در بخش‌های بالایی و پایانی قرار گرفته‌اند.
-
-می‌تونی این رو مستقیم قرار بدی روی ریپوزیتوری گیت‌هابت! بعدش بریم سراغ کدهای لندینگ پیج تک‌صفحه‌ای `cli.nooty.ir` ! 🔥🚀💎
