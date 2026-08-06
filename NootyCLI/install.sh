@@ -1,94 +1,76 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# 🚀 NootyCLI Auto Installer v0.2.2 "Radin Pro"
-# ==============================================================================
-
+# install.sh – Smart installer for NootyCLI v0.2.2 (macOS / Linux / WSL)
 set -e
 
-VERSION="0.2.2"
-SOURCE_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/0.2.2/nooty.go"
+NOOTY_VERSION="0.2.2"
+REPO_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/${NOOTY_VERSION}/nooty.go"
+INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="nooty"
-TEMP_DIR="/tmp/nooty-install-$$"
 
-if [ -t 1 ]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    MAGENTA='\033[0;35m'
-    CYAN='\033[0;36m'
-    WHITE='\033[1;37m'
-    BOLD='\033[1m'
-    NC='\033[0m'
-else
-    RED=''; GREEN=''; YELLOW=''; BLUE=''; MAGENTA=''; CYAN=''; WHITE=''; BOLD=''; NC=''
-fi
+# Colors
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
-echo -e "${CYAN}│${MAGENTA}${BOLD}   _  _  ___   ___  _____ __   __  ___  _    ___        ${CYAN}│${NC}"
-echo -e "${CYAN}│${MAGENTA}${BOLD}  | \| |/ _ \ / _ \|_   _|\ \ / / / __|| |  |_ _|       ${CYAN}│${NC}"
-echo -e "${CYAN}│${MAGENTA}${BOLD}  | .` | (_) | (_) | | |   \ V / | (__ | |__ | |        ${CYAN}│${NC}"
-echo -e "${CYAN}│${MAGENTA}${BOLD}  |_|\_|\___/ \___/  |_|    |_|   \___||____|___|       ${CYAN}│${NC}"
-echo -e "${CYAN}├──────────────────────────────────────────────────────────┤${NC}"
-echo -e "${CYAN}│${WHITE}  NootyCLI v${VERSION} — Agentic Terminal Intelligence       ${CYAN}│${NC}"
-echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
+progress_bar() {
+    local duration=${1:-1}; local steps=20
+    for ((i=0;i<=steps;i++)); do
+        local pct=$((i*100/steps)); local filled=$((pct/5)); local empty=$((20-filled))
+        printf "\r["
+        for ((j=0;j<filled;j++)); do printf "#"; done
+        for ((j=0;j<empty;j++)); do printf "."; done
+        printf "] %%d%%%%" "$pct"
+        sleep 0.05
+    done; echo
+}
+
+echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   NootyCLI v${NOOTY_VERSION} – Smart Installer       ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
 echo
 
-echo -e " ${BLUE}ℹ${NC} Detecting operating system..."
 OS="$(uname -s)"
-ARCH="$(uname -m)"
-echo -e " ${GREEN}✔${NC} System identified: ${BOLD}${OS} (${ARCH})${NC}"
+if [[ "$OS" == "Darwin" ]]; then echo -e "${CYAN}✓ macOS${NC}"
+elif [[ "$OS" == "Linux" ]]; then echo -e "${CYAN}✓ Linux${NC}"
+else echo -e "${RED}Unsupported OS: $OS${NC}"; exit 1; fi
 
-echo -e " ${BLUE}ℹ${NC} Checking Go toolchain..."
-if command -v go >/dev/null 2>&1; then
-    GO_VER="$(go version | awk '{print $3}')"
-    echo -e " ${GREEN}✔${NC} Found Go Engine: ${BOLD}${GO_VER}${NC}"
+if command -v go &>/dev/null; then
+    echo -e "${GREEN}✓ Go $(go version | awk '{print $3}')${NC}"
 else
-    echo -e " ${YELLOW}⚠${NC} Go toolchain not found. Installing Go..."
-    if [ "$OS" = "Darwin" ]; then
+    echo -e "${YELLOW}Installing Go...${NC}"
+    if [[ "$OS" == "Darwin" ]]; then
+        if ! command -v brew &>/dev/null; then /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; fi
         brew install go
-    elif [ "$OS" = "Linux" ]; then
-        sudo apt-get update -qq && sudo apt-get install -y -qq golang-go
     else
-        echo -e " ${RED}✖${NC} Please install Go manually: https://go.dev/doc/install"
-        exit 1
+        if command -v apt-get &>/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq golang-go
+        elif command -v yum &>/dev/null; then sudo yum install -y golang
+        elif command -v dnf &>/dev/null; then sudo dnf install -y golang
+        else echo -e "${RED}Install Go manually: https://go.dev/dl/${NC}"; exit 1; fi
     fi
+    echo -e "${GREEN}✓ Go installed${NC}"
 fi
 
-mkdir -p "$TEMP_DIR"
-trap 'rm -rf "$TEMP_DIR"' EXIT
+echo -e "\n${CYAN}📥 Downloading nooty.go (v${NOOTY_VERSION})...${NC}"
+curl -fsSL "$REPO_URL" -o /tmp/nooty.go
+echo -e "${GREEN}✓ Downloaded${NC}"
 
-echo -e " ${BLUE}ℹ${NC} Downloading NootyCLI core source..."
-if ! curl -fsSL "$SOURCE_URL" -o "$TEMP_DIR/nooty.go"; then
-    FALLBACK_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/nooty.go"
-    curl -fsSL "$FALLBACK_URL" -o "$TEMP_DIR/nooty.go" || { echo -e " ${RED}✖${NC} Download failed."; exit 1; }
-fi
-echo -e " ${GREEN}✔${NC} Source code downloaded."
+echo -e "\n${CYAN}🔨 Building optimized binary...${NC}"
+cd /tmp
+go build -ldflags="-s -w" -o "$BINARY_NAME" nooty.go
+echo -e "${GREEN}✓ Built${NC}"
 
-echo -e " ${BLUE}ℹ${NC} Compiling binary executable..."
-(cd "$TEMP_DIR" && go build -ldflags="-s -w" -o "$BINARY_NAME" nooty.go)
-echo -e " ${GREEN}✔${NC} Compilation successful."
-
-TARGET_DIR="/usr/local/bin"
-if [ ! -w "$TARGET_DIR" ]; then
-    if command -v sudo >/dev/null 2>&1; then
-        sudo mv "$TEMP_DIR/$BINARY_NAME" "$TARGET_DIR/"
-        sudo chmod +x "$TARGET_DIR/$BINARY_NAME"
-    else
-        TARGET_DIR="$HOME/.local/bin"
-        mkdir -p "$TARGET_DIR"
-        mv "$TEMP_DIR/$BINARY_NAME" "$TARGET_DIR/"
-        chmod +x "$TARGET_DIR/$BINARY_NAME"
-    fi
+echo -e "\n${CYAN}📦 Installing to ${INSTALL_DIR}/${BINARY_NAME}...${NC}"
+if [ -w "$INSTALL_DIR" ]; then
+    mv "$BINARY_NAME" "$INSTALL_DIR/"
+    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 else
-    mv "$TEMP_DIR/$BINARY_NAME" "$TARGET_DIR/"
-    chmod +x "$TARGET_DIR/$BINARY_NAME"
+    sudo mv "$BINARY_NAME" "$INSTALL_DIR/"
+    sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 fi
+rm -f /tmp/nooty.go
+echo -e "${GREEN}✓ Installed${NC}"
 
-echo -e " ${GREEN}✔${NC} Installed to ${TARGET_DIR}/${BINARY_NAME}"
+echo -e "\n${CYAN}⚡ Finalizing...${NC}"
+progress_bar 1
 
-mkdir -p "$HOME/.nooty/chats"
-
-echo
-echo -e "${GREEN}🎉 NootyCLI v${VERSION} successfully installed!${NC}"
-echo -e "Run ${CYAN}${BOLD}nooty${NC} to start."
+echo -e "\n${GREEN}${BOLD}✅ NootyCLI v${NOOTY_VERSION} ready!${NC}"
+echo -e "   Run: ${CYAN}nooty${NC}"
+echo -e "   Then: ${CYAN}/config${NC} , ${CYAN}/mode cli${NC} , ${CYAN}/help${NC}\n"
