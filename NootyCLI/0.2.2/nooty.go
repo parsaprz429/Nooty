@@ -1,17 +1,15 @@
 // nooty.go — NootyCLI v0.2.2 "Radin Pro" – Agentic Terminal Intelligence
-// Single‑file, zero external dependencies, macOS / Linux / Windows (CMD/PowerShell/WSL).
+// Single‑file, zero external dependencies, cross-platform (macOS / Linux / Windows / WSL).
 //
-// 🚀 Compile & Run:
-//   go run nooty.go
-//   OR
-//   go build -o nooty nooty.go
+// 🚀 Compile & Build:
+//   go build -ldflags="-s -w" -o nooty nooty.go
 //
 // 🛠 Commands:
-//   /config       → interactive setup (API key, provider, model)
-//   /model list   → browse & select models interactively
-//   /mode cli     → switch to Agentic execution mode
-//   /dns          → view smart DNS fallback chain
-//   /doctor       → test full network connection & provider status
+//   /config       → Interactive configuration wizard
+//   /model list   → Browse & select available models
+//   /mode cli     → Switch to Autonomous Agent Mode
+//   /dns          → View Anti-Sanction Smart DNS Shield chain
+//   /doctor       → Run full network connection & provider diagnostic
 
 package main
 
@@ -35,11 +33,10 @@ import (
 	"time"
 )
 
-// ---------- Cross-Platform ANSI Color Support ----------
+// ---------- Cross-Platform ANSI Styling Engine ----------
 var useColor = true
 
 func init() {
-	// Enable ANSI support on legacy Windows Console
 	if runtime.GOOS == "windows" {
 		_ = exec.Command("cmd", "/c", "color").Run()
 	}
@@ -68,7 +65,7 @@ const (
 	white   = "\033[37m"
 )
 
-// ---------- Data Structures ----------
+// ---------- Data Models ----------
 type Config struct {
 	ProviderEndpoint string `json:"provider_endpoint"`
 	APIKey           string `json:"api_key"`
@@ -125,7 +122,6 @@ var (
 	memFile         string
 	configFile      string
 
-	// Anti-Sanction Smart DNS Fallback Chain
 	fallbackDNS = []DNSResolver{
 		{Name: "Direct Connection", Address: ""},
 		{Name: "Electro DNS", Address: "78.157.42.100"},
@@ -133,14 +129,13 @@ var (
 		{Name: "Shecan DNS #2", Address: "185.51.200.2"},
 		{Name: "Begzar DNS #1", Address: "185.55.226.26"},
 		{Name: "Begzar DNS #2", Address: "185.55.225.25"},
-		{Name: "Begzar DNS #3", Address: "185.55.224.24"},
 	}
 	activeDNSName = "Direct Connection"
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "NootyCLI v0.2.2 — Local-first terminal intelligence agent\n\nUsage:\n  nooty [options]\n\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "NootyCLI v0.2.2 — Agentic Terminal Intelligence\n\nUsage:\n  nooty [options]\n\nOptions:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -148,7 +143,7 @@ func main() {
 	var err error
 	homeDir, err = os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "⚠ Error: Cannot locate home directory.")
+		fmt.Fprintln(os.Stderr, "⚠ Error: Cannot locate user home directory.")
 		os.Exit(1)
 	}
 
@@ -175,7 +170,7 @@ func main() {
 	repl()
 }
 
-// ---------- Claude Code Style Header ----------
+// ---------- Minimal Sleek Header ----------
 func drawHeader() {
 	width := 64
 	line := strings.Repeat("─", width-2)
@@ -185,11 +180,13 @@ func drawHeader() {
 	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.2.2 Radin Pro — Agentic Terminal Intelligence", width-2), c(cyan), c(reset))
 	fmt.Println(c(cyan) + "├" + line + "┤" + c(reset))
 
+	prettyWorkspace := formatPath(workspace)
+
 	entries := [][]string{
 		{"Provider", truncateString(config.ProviderEndpoint, 38)},
 		{"Model", config.Model},
 		{"API Key", maskAPIKey(config.APIKey)},
-		{"Workspace", truncateString(workspace, 38)},
+		{"Workspace", truncateString(prettyWorkspace, 38)},
 		{"DNS Shield", activeDNSName},
 		{"Mode", strings.ToUpper(currentMode) + " Mode"},
 	}
@@ -200,7 +197,14 @@ func drawHeader() {
 			c(cyan), c(bold)+c(white), e[0], c(green), val, c(cyan), c(reset))
 	}
 	fmt.Println(c(cyan) + "└" + line + "┘" + c(reset))
-	fmt.Printf("%s💡 Type %s/help%s for commands, %s/mode cli%s for Agent Mode.%s\n\n", c(dim), c(bold)+c(green), c(dim), c(bold)+c(cyan), c(dim), c(reset))
+	fmt.Printf("%s💡 Type %s/help%s for options, %s/mode cli%s for Agent Mode.%s\n\n", c(dim), c(bold)+c(green), c(dim), c(bold)+c(cyan), c(dim), c(reset))
+}
+
+func formatPath(path string) string {
+	if strings.HasPrefix(path, homeDir) {
+		return "~" + strings.TrimPrefix(path, homeDir)
+	}
+	return path
 }
 
 func centerText(text string, width int) string {
@@ -221,7 +225,7 @@ func truncateString(s string, max int) string {
 
 func maskAPIKey(key string) string {
 	if key == "" {
-		return "(not set)"
+		return "(not configured)"
 	}
 	if len(key) <= 8 {
 		return key[:1] + strings.Repeat("*", len(key)-1)
@@ -229,7 +233,7 @@ func maskAPIKey(key string) string {
 	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
 }
 
-// ---------- REPL Engine ----------
+// ---------- Interactive REPL Engine ----------
 func repl() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -250,7 +254,7 @@ func repl() {
 			handleChat(line)
 		}
 	}
-	fmt.Println("\n👋 Goodbye from NootyCLI!")
+	fmt.Println(c(dim) + "\n👋 NootyCLI session ended. Goodbye!" + c(reset))
 }
 
 func prompt() string {
@@ -260,7 +264,7 @@ func prompt() string {
 	return c(bold) + c(green) + "⚡ nooty" + c(white) + " ❯ " + c(reset)
 }
 
-// ---------- Slash Command Processor ----------
+// ---------- Command Dispatcher ----------
 func handleSlashCommand(cmd string) {
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
@@ -273,10 +277,10 @@ func handleSlashCommand(cmd string) {
 	case "/mode":
 		if len(parts) > 1 && parts[1] == "cli" {
 			currentMode = "cli"
-			fmt.Println(c(green) + "🛠 Switched to Nooty Agent Mode (Tool & Command execution enabled)." + c(reset))
+			fmt.Println(c(green) + "🛠 Switched to Agent Mode (Tool Execution Enabled)." + c(reset))
 		} else {
 			currentMode = "chat"
-			fmt.Println(c(green) + "💬 Switched to Interactive NootyChat Mode." + c(reset))
+			fmt.Println(c(green) + "💬 Switched to Conversational Chat Mode." + c(reset))
 		}
 	case "/workspace":
 		handleWorkspace(parts[1:])
@@ -286,8 +290,6 @@ func handleSlashCommand(cmd string) {
 		handleConfig()
 	case "/dns":
 		showDNSStatus()
-	case "/provider":
-		handleProviderStatus()
 	case "/doctor":
 		runDoctor()
 	case "/memory":
@@ -306,7 +308,7 @@ func handleSlashCommand(cmd string) {
 			fmt.Print("\033[H\033[2J")
 		}
 		drawHeader()
-		fmt.Println(c(green) + "✨ Session history and screen cleared." + c(reset))
+		fmt.Println(c(green) + "✨ Session history & screen cleared." + c(reset))
 	case "/exit":
 		os.Exit(0)
 	default:
@@ -317,25 +319,25 @@ func handleSlashCommand(cmd string) {
 func printHelp() {
 	fmt.Println(c(bold) + "\n📌 NootyCLI Command Reference:" + c(reset))
 	fmt.Println(`
-  /help                        Show this help message
-  /mode [chat|cli]             Switch between Conversational Chat and Agentic CLI Mode
-  /config                      Interactive wizard for API key, provider, and model setup
-  /workspace show|set <path>   View or switch current workspace directory
-  /model show|set <name>|list  View, set, or interactively select models
-  /dns                         Display Anti-Sanction Smart DNS status & fallback chain
-  /doctor                      Run full connection and API diagnostic check
-  /memory list|add|forget      Manage persistent long-term memories
-  /safety strict|balanced      Toggle execution safety filters
-  /history                     Show session chat history
-  /clear                       Clear screen and reset current session
-  /exit                        Exit NootyCLI
+  /help                        Show command help overview
+  /mode [chat|cli]             Toggle Chat or Agentic CLI Execution Mode
+  /config                      Interactive wizard to setup API key, endpoint & model
+  /workspace show|set <path>   Manage current working directory
+  /model show|set <name>|list  View, switch, or browse models interactively
+  /dns                         Display Anti-Sanction Smart DNS Shield status
+  /doctor                      Run full connection and API health check
+  /memory list|add|forget      Manage long-term persistent agent context
+  /safety strict|balanced      Set command safety confirmation policies
+  /history                     Display conversation session log
+  /clear                       Reset current screen & session memory
+  /exit                        Terminate NootyCLI session
 
-  💡 In CLI Mode: Start a command line with ! to execute shell commands directly.`)
+  💡 In Agent CLI Mode: Prefix commands with ! for direct shell execution.`)
 }
 
 func handleConfig() {
-	fmt.Println(c(bold) + "⚙️  Nooty Configuration Wizard" + c(reset))
-	fmt.Println("Press Enter to keep current values.\n")
+	fmt.Println(c(bold) + "\n⚙️ Nooty Configuration Wizard" + c(reset))
+	fmt.Println("Press Enter to keep existing settings.\n")
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Printf("Provider endpoint [%s]: ", config.ProviderEndpoint)
@@ -360,20 +362,20 @@ func handleConfig() {
 	}
 
 	saveConfig()
-	fmt.Println(c(green) + "✅ Configuration updated and saved successfully!" + c(reset))
+	fmt.Println(c(green) + "✅ Configuration saved successfully!\n" + c(reset))
 }
 
 func showDNSStatus() {
-	fmt.Println(c(bold) + "\n🛡️  Anti-Sanction Smart DNS Shield Chain:" + c(reset))
+	fmt.Println(c(bold) + "\n🛡️ Anti-Sanction Smart DNS Fallback Chain:" + c(reset))
 	for i, dns := range fallbackDNS {
 		status := ""
 		if dns.Name == activeDNSName {
 			status = c(green) + " [ACTIVE]" + c(reset)
 		}
 		if dns.Address == "" {
-			fmt.Printf("  %d. %-22s (System Default)%s\n", i+1, dns.Name, status)
+			fmt.Printf("  %d. %-24s (System Default)%s\n", i+1, dns.Name, status)
 		} else {
-			fmt.Printf("  %d. %-22s (%s)%s\n", i+1, dns.Name, dns.Address, status)
+			fmt.Printf("  %d. %-24s (%s)%s\n", i+1, dns.Name, dns.Address, status)
 		}
 	}
 	fmt.Println()
@@ -398,19 +400,19 @@ func handleModelCommand(args []string) {
 	case "list":
 		selectModelInteractive()
 	default:
-		fmt.Println("❌ Unknown model subcommand. Use: show | set | list")
+		fmt.Println("❌ Unknown subcommand. Use: show | set | list")
 	}
 }
 
 func selectModelInteractive() {
-	fmt.Println("🔍 Fetching available models from provider...")
+	fmt.Println("🔍 Fetching available models...")
 	models, err := fetchAvailableModels()
 	if err != nil {
-		fmt.Printf("%s❌ Failed to fetch models: %v%s\n", c(red), err, c(reset))
+		fmt.Printf("%s❌ Model list error: %v%s\n", c(red), err, c(reset))
 		return
 	}
 	if len(models) == 0 {
-		fmt.Println("⚠️  No models returned by the provider.")
+		fmt.Println("⚠️ Provider returned zero models.")
 		return
 	}
 
@@ -419,7 +421,7 @@ func selectModelInteractive() {
 	page := 0
 
 	for {
-		fmt.Printf("\n%s📋 Available Models (Page %d/%d):%s\n", c(bold), page+1, totalPages)
+		fmt.Printf("\n%s📋 Available Provider Models (Page %d/%d):%s\n", c(bold), page+1, totalPages)
 		start := page * pageSize
 		end := start + pageSize
 		if end > len(models) {
@@ -430,7 +432,7 @@ func selectModelInteractive() {
 			fmt.Printf("  %s[%2d]%s %s\n", c(bold)+c(cyan), start+i+1, c(reset), m)
 		}
 
-		fmt.Print("\nEnter number to select, [n]ext, [p]rev, or [q]uit: ")
+		fmt.Print("\nSelect number, [n]ext, [p]rev, or [q]uit: ")
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(strings.ToLower(input))
@@ -455,13 +457,13 @@ func selectModelInteractive() {
 			selected := models[num-1]
 			config.Model = selected
 			saveConfig()
-			fmt.Printf("%s✅ Active Model set to: %s%s\n", c(green), selected, c(reset))
+			fmt.Printf("%s✅ Active Model updated to: %s%s\n", c(green), selected, c(reset))
 			return
 		}
 	}
 }
 
-// ---------- Anti-Sanction Network & Fallback Transport ----------
+// ---------- Network Transport Engine ----------
 func dnsDialer(dnsServer string) func(ctx context.Context, network, address string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		d := net.Dialer{}
@@ -482,21 +484,6 @@ func httpClientForDNS(dns string) *http.Client {
 		Transport: &http.Transport{DialContext: dialer.DialContext},
 		Timeout:   35 * time.Second,
 	}
-}
-
-func isSanctionOrNetworkError(err error, statusCode int) bool {
-	if statusCode == 403 || statusCode == 451 {
-		return true
-	}
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "no such host") ||
-		strings.Contains(s, "timeout") ||
-		strings.Contains(s, "connection refused") ||
-		strings.Contains(s, "reset") ||
-		strings.Contains(s, "eof")
 }
 
 func doWithFallback(method, url string, body []byte, headers map[string]string) (*http.Response, error) {
@@ -524,16 +511,15 @@ func doWithFallback(method, url string, body []byte, headers map[string]string) 
 			return resp, nil
 		}
 
-		// Sanction or network failure detected -> Switch DNS
 		if i < len(fallbackDNS)-1 {
-			fmt.Printf("%s⚠️ Direct connection/DNS blocked (%s). Switching to %s...%s\n",
+			fmt.Printf("%s⚠️ Direct connection/DNS blocked (%s). Bypassing via %s...%s\n",
 				c(yellow), dnsResolver.Name, fallbackDNS[i+1].Name, c(reset))
 		}
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
 	}
-	return nil, fmt.Errorf("all network & anti-sanction DNS resolvers failed to connect")
+	return nil, fmt.Errorf("network connection failed: all anti-sanction resolvers exhausted")
 }
 
 func fetchAvailableModels() ([]string, error) {
@@ -561,7 +547,7 @@ func fetchAvailableModels() ([]string, error) {
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse models JSON response")
+		return nil, fmt.Errorf("failed to parse models payload")
 	}
 
 	var models []string
@@ -571,7 +557,7 @@ func fetchAvailableModels() ([]string, error) {
 	return models, nil
 }
 
-// ---------- Chat & Agent Handler ----------
+// ---------- Chat Execution ----------
 func handleChat(input string) {
 	messages := buildMessages(input)
 	if currentMode == "cli" {
@@ -583,15 +569,15 @@ func handleChat(input string) {
 
 func buildMessages(userInput string) []Message {
 	var msgs []Message
-	sysPrompt := `You are NootyCLI, an agentic terminal AI assistant.
+	sysPrompt := `You are NootyCLI, an autonomous agentic terminal AI assistant.
 
-When in CHAT mode: Answer conversationally and clearly with code examples when needed.
+When in CHAT mode: Provide concise, expert terminal and software engineering responses.
 
-When in CLI mode: You act as an autonomous terminal agent.
-To execute tools, reply STRICTLY with the format:
+When in CLI mode: You act as an autonomous workspace agent.
+To execute tools, reply STRICTLY using this exact syntax:
 TOOL: tool_name key1="value1" key2="value2"
 
-Available Agent Tools:
+Available Workspace Tools:
 - list_files (path="relative_path")
 - tree (path="relative_path")
 - read_file (path="relative_path")
@@ -604,11 +590,11 @@ Available Agent Tools:
 - git_diff
 - run_command (command="shell_cmd", timeout="seconds")
 
-IMPORTANT: Use EXACT tool format. Provide single tool invocation per step.`
+IMPORTANT: Use EXACT tool format. Issue only ONE tool call per interaction step.`
 
 	relevant := getRelevantMemories(userInput)
 	if len(relevant) > 0 {
-		sysPrompt += "\n\nUser Persistent Context:\n"
+		sysPrompt += "\n\nUser Context & Memories:\n"
 		for _, m := range relevant {
 			sysPrompt += fmt.Sprintf("- [%s] %s\n", m.Tag, m.Content)
 		}
@@ -655,7 +641,7 @@ func streamResponse(messages []Message) {
 
 	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
 	if err != nil {
-		fmt.Printf("%s❌ Request failed: %v%s\n", c(red), err, c(reset))
+		fmt.Printf("%s❌ Request error: %v%s\n", c(red), err, c(reset))
 		return
 	}
 	defer resp.Body.Close()
@@ -697,21 +683,21 @@ func streamResponse(messages []Message) {
 	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fullContent.String()})
 }
 
-// ---------- Agentic Loop (Plan & Execute Engine) ----------
+// ---------- Agentic Plan & Execute Loop ----------
 func runAgentLoop(messages []Message) {
-	planPrompt := append(messages, Message{Role: "user", Content: "Make a concise, numbered action plan for fulfilling this request."})
-	fmt.Print(c(yellow) + "🤔 Planning actions... " + c(reset))
+	planPrompt := append(messages, Message{Role: "user", Content: "Provide a clear, numbered execution plan to fulfill this request."})
+	fmt.Print(c(yellow) + "🤔 Analyzing & planning action sequence... " + c(reset))
 
 	planText, err := getModelResponseText(planPrompt)
 	if err != nil {
-		fmt.Printf("%s❌ Plan generation failed: %v%s\n", c(red), err, c(reset))
+		fmt.Printf("%s❌ Planning failed: %v%s\n", c(red), err, c(reset))
 		return
 	}
 
-	fmt.Println("\n" + c(cyan) + c(bold) + "📋 Proposed Agent Execution Plan:" + c(reset))
+	fmt.Println("\n" + c(cyan) + c(bold) + "📋 Proposed Execution Plan:" + c(reset))
 	fmt.Println(c(cyan) + planText + c(reset) + "\n")
 
-	fmt.Print(c(bold) + "Proceed with execution? [Y/n]: " + c(reset))
+	fmt.Print(c(bold) + "Approve plan execution? [Y/n]: " + c(reset))
 	reader := bufio.NewReader(os.Stdin)
 	confirm, _ := reader.ReadString('\n')
 	confirm = strings.TrimSpace(strings.ToLower(confirm))
@@ -722,13 +708,13 @@ func runAgentLoop(messages []Message) {
 
 	msgs := append(messages,
 		Message{Role: "assistant", Content: planText},
-		Message{Role: "user", Content: "Plan approved. Execute step by step using TOOL commands."},
+		Message{Role: "user", Content: "Plan approved. Proceed step by step using TOOL commands."},
 	)
 
 	for i := 0; i < 10; i++ {
 		respText, err := getModelResponseText(msgs)
 		if err != nil {
-			fmt.Printf("%s❌ Agent Error: %v%s\n", c(red), err, c(reset))
+			fmt.Printf("%s❌ Agent Execution Error: %v%s\n", c(red), err, c(reset))
 			return
 		}
 
@@ -739,25 +725,25 @@ func runAgentLoop(messages []Message) {
 			return
 		}
 
-		fmt.Printf("\n%s🔧 Agent Step [%d]: %s%s\n", c(bold)+c(yellow), i+1, toolCall.Name, c(reset))
+		fmt.Printf("\n%s🔧 Agent Action [%d]: %s%s\n", c(bold)+c(yellow), i+1, toolCall.Name, c(reset))
 		for k, v := range toolCall.Args {
 			fmt.Printf("   %s%s%s: %s\n", c(dim), k, c(reset), v)
 		}
 
 		toolResult, approved := executeAgentTool(toolCall)
 		if !approved {
-			msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: "Action cancelled by user."})
+			msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: "Action denied by user safety policy."})
 			continue
 		}
 
 		if len(toolResult) > 2500 {
-			toolResult = toolResult[:2500] + "\n... (truncated for context limits)"
+			toolResult = toolResult[:2500] + "\n... (output truncated)"
 		}
 
-		fmt.Printf("%s📄 Output:%s\n%s\n", c(dim), c(reset), toolResult)
-		msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: fmt.Sprintf("Tool '%s' result:\n%s", toolCall.Name, toolResult)})
+		fmt.Printf("%s📄 Tool Output:%s\n%s\n", c(dim), c(reset), toolResult)
+		msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: fmt.Sprintf("Tool '%s' output:\n%s", toolCall.Name, toolResult)})
 	}
-	fmt.Printf("%s⚠️ Agent step limit reached (10 iterations).%s\n", c(yellow), c(reset))
+	fmt.Printf("%s⚠️ Agent loop step limit reached (10 steps).%s\n", c(yellow), c(reset))
 }
 
 func getModelResponseText(messages []Message) (string, error) {
@@ -792,7 +778,7 @@ func getModelResponseText(messages []Message) (string, error) {
 		return "", err
 	}
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("empty response choices from provider")
+		return "", fmt.Errorf("empty choices array in response")
 	}
 
 	return result.Choices[0].Message.Content, nil
@@ -865,21 +851,21 @@ func executeAgentTool(tc *ToolCall) (string, bool) {
 	}
 
 	if needsApproval {
-		if tc.Name == "delete_file" || tc.Name == "delete_directory" {
-			fmt.Printf("%s⚠️ DANGEROUS ACTION: %s will permanently remove data!%s\n", c(red), tc.Name, c(reset))
-			fmt.Print("Type DELETE to confirm: ")
+		if tc.Name == "delete_file" {
+			fmt.Printf("%s⚠️ SAFETY WARNING: %s will permanently delete target file!%s\n", c(red), tc.Name, c(reset))
+			fmt.Print("Type DELETE to confirm action: ")
 			reader := bufio.NewReader(os.Stdin)
 			confirm, _ := reader.ReadString('\n')
 			if strings.TrimSpace(confirm) != "DELETE" {
-				return "Operation aborted by user safety guard.", false
+				return "Operation aborted by safety check.", false
 			}
 		} else {
-			fmt.Print("Allow execution? [Y/n]: ")
+			fmt.Print("Confirm execution? [Y/n]: ")
 			reader := bufio.NewReader(os.Stdin)
 			confirm, _ := reader.ReadString('\n')
 			confirm = strings.TrimSpace(strings.ToLower(confirm))
 			if confirm == "n" || confirm == "no" {
-				return "Operation aborted by user.", false
+				return "Operation cancelled by user.", false
 			}
 		}
 	}
@@ -911,7 +897,7 @@ func runTool(name string, args map[string]string) (string, error) {
 			}
 		}
 		if len(names) == 0 {
-			return "(directory is empty)", nil
+			return "(directory empty)", nil
 		}
 		return strings.Join(names, "\n"), nil
 
@@ -938,14 +924,14 @@ func runTool(name string, args map[string]string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("✅ File written successfully (%d bytes): %s", len(content), args["path"]), nil
+		return fmt.Sprintf("✅ File saved (%d bytes): %s", len(content), args["path"]), nil
 
 	case "delete_file":
 		path := safeJoin(workspace, args["path"])
 		if err := os.Remove(path); err != nil {
 			return "", err
 		}
-		return "✅ File deleted: " + args["path"], nil
+		return "✅ File removed: " + args["path"], nil
 
 	case "search_code":
 		query := args["query"]
@@ -966,7 +952,7 @@ func runTool(name string, args map[string]string) (string, error) {
 			return nil
 		})
 		if len(results) == 0 {
-			return "No code matches found.", nil
+			return "No matches found.", nil
 		}
 		return strings.Join(results, "\n"), nil
 
@@ -983,11 +969,11 @@ func runTool(name string, args map[string]string) (string, error) {
 		cmd.Dir = workspace
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("git status failed: %v", err)
+			return "", fmt.Errorf("git status error: %v", err)
 		}
 		s := string(out)
 		if s == "" {
-			s = "(working tree clean)"
+			s = "(working directory clean)"
 		}
 		return s, nil
 
@@ -996,7 +982,7 @@ func runTool(name string, args map[string]string) (string, error) {
 		cmd.Dir = workspace
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("git diff failed: %v", err)
+			return "", fmt.Errorf("git diff error: %v", err)
 		}
 		s := string(out)
 		if s == "" {
@@ -1037,18 +1023,18 @@ func runTool(name string, args map[string]string) (string, error) {
 				out += "\n[stderr]\n" + errBuf.String()
 			}
 			if err != nil {
-				return out + fmt.Sprintf("\nCommand exit error: %v", err), nil
+				return out + fmt.Sprintf("\nExit status: %v", err), nil
 			}
 			if out == "" {
-				out = "(command executed with no output)"
+				out = "(command executed successfully with no output)"
 			}
 			return out, nil
 		case <-time.After(time.Duration(timeout) * time.Second):
 			_ = cmd.Process.Kill()
-			return "", fmt.Errorf("command execution timed out after %d seconds", timeout)
+			return "", fmt.Errorf("execution timed out (%d sec)", timeout)
 		}
 	}
-	return "", fmt.Errorf("unknown tool name: %s", name)
+	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
 func dirTree(root, indent string) string {
@@ -1081,11 +1067,11 @@ func safeJoin(base, rel string) string {
 	return abs
 }
 
-// ---------- Direct Shell Execution Bang ----------
+// ---------- Direct Shell Command Engine ----------
 func handleShellBang(cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	fmt.Printf("\n%s⚡ Direct Shell Command:%s %s\n", c(yellow), c(reset), cmd)
-	fmt.Print("Execute command? [Y/n]: ")
+	fmt.Print("Execute? [Y/n]: ")
 	reader := bufio.NewReader(os.Stdin)
 	resp, _ := reader.ReadString('\n')
 	resp = strings.TrimSpace(strings.ToLower(resp))
@@ -1111,15 +1097,15 @@ func executeShell(command string) {
 	}
 }
 
-// ---------- Helper Commands ----------
+// ---------- Utilities & Handlers ----------
 func handleWorkspace(args []string) {
 	if len(args) == 0 {
-		fmt.Printf("📁 Active Workspace: %s\n", workspace)
+		fmt.Printf("📁 Workspace: %s\n", formatPath(workspace))
 		return
 	}
 	switch args[0] {
 	case "show":
-		fmt.Printf("📁 Active Workspace: %s\n", workspace)
+		fmt.Printf("📁 Workspace: %s\n", formatPath(workspace))
 	case "set":
 		if len(args) < 2 {
 			fmt.Println("Usage: /workspace set <path>")
@@ -1127,36 +1113,31 @@ func handleWorkspace(args []string) {
 		}
 		path, _ := filepath.Abs(args[1])
 		if info, err := os.Stat(path); err != nil || !info.IsDir() {
-			fmt.Println("❌ Invalid directory path.")
+			fmt.Println("❌ Directory does not exist.")
 			return
 		}
 		workspace = path
 		config.Workspace = path
 		saveConfig()
-		fmt.Printf("✅ Workspace changed to: %s\n", workspace)
+		fmt.Printf("✅ Workspace set to: %s\n", formatPath(workspace))
 	default:
-		fmt.Println("❌ Unknown subcommand. Use: show | set <path>")
+		fmt.Println("❌ Subcommand unknown. Use: show | set <path>")
 	}
-}
-
-func handleProviderStatus() {
-	fmt.Printf("🌐 Endpoint: %s\n🤖 Model: %s\n🔑 Key: %s\n",
-		config.ProviderEndpoint, config.Model, maskAPIKey(config.APIKey))
 }
 
 func runDoctor() {
 	fmt.Println(c(bold) + "\n🏥 NootyCLI Diagnostic Doctor" + c(reset))
 	fmt.Printf("• Provider Endpoint : %s\n", config.ProviderEndpoint)
-	fmt.Printf("• Selected Model    : %s\n", config.Model)
+	fmt.Printf("• Active Model      : %s\n", config.Model)
 	fmt.Printf("• API Key           : %s\n", maskAPIKey(config.APIKey))
-	fmt.Printf("• Workspace         : %s\n", workspace)
-	fmt.Print("• Connection Check  : ")
+	fmt.Printf("• Active Workspace  : %s\n", formatPath(workspace))
+	fmt.Print("• Provider Status   : ")
 
 	models, err := fetchAvailableModels()
 	if err != nil {
 		fmt.Printf("%sFAILED (%v)%s\n\n", c(red), err, c(reset))
 	} else {
-		fmt.Printf("%sPASSED (Found %d models via %s)%s\n\n", c(green), len(models), activeDNSName, c(reset))
+		fmt.Printf("%sOK (%d models accessible via %s)%s\n\n", c(green), len(models), activeDNSName, c(reset))
 	}
 }
 
@@ -1168,7 +1149,7 @@ func handleMemory(args []string) {
 	switch args[0] {
 	case "list":
 		if len(memories) == 0 {
-			fmt.Println("🧠 Long-term memory is empty.")
+			fmt.Println("🧠 No persistent memories found.")
 			return
 		}
 		fmt.Println(c(bold) + "\n🧠 Persistent Memories:" + c(reset))
@@ -1184,7 +1165,7 @@ func handleMemory(args []string) {
 		text := strings.Join(args[1:], " ")
 		m := Memory{
 			ID:      len(memories) + 1,
-			Tag:     "preference",
+			Tag:     "context",
 			Content: text,
 			Added:   time.Now().Format(time.RFC3339),
 		}
@@ -1205,7 +1186,7 @@ func handleMemory(args []string) {
 		}
 		memories = newMem
 		saveMemories()
-		fmt.Printf("✅ Memory [%d] deleted.\n", id)
+		fmt.Printf("✅ Memory [%d] removed.\n", id)
 	}
 }
 
@@ -1217,7 +1198,7 @@ func handleSafety(args []string) {
 	if args[0] == "strict" || args[0] == "balanced" {
 		config.Safety = args[0]
 		saveConfig()
-		fmt.Printf("✅ Safety set to %s.\n", config.Safety)
+		fmt.Printf("✅ Safety updated to %s.\n", config.Safety)
 	} else {
 		fmt.Println("Usage: /safety strict|balanced")
 	}
@@ -1225,10 +1206,10 @@ func handleSafety(args []string) {
 
 func showHistory() {
 	if len(sessionMessages) == 0 {
-		fmt.Println("💬 History is empty.")
+		fmt.Println("💬 History clean.")
 		return
 	}
-	fmt.Println(c(bold) + "\n📜 Session History:" + c(reset))
+	fmt.Println(c(bold) + "\n📜 Session Log:" + c(reset))
 	for _, msg := range sessionMessages {
 		role := "👤 User"
 		if msg.Role == "assistant" {
