@@ -1,51 +1,99 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# 🚀 NootyCLI v0.2.0 One-Line Installer
-# ==============================================================================
+# install.sh – Smart installer for NootyCLI v0.2.0
+# Supports macOS and Linux. Installs Go if missing, downloads and builds Nooty.
 
 set -e
 
-# Palette
-RESET="\033[0m"
-BOLD="\033[1m"
-CYAN="\033[36m"
-GREEN="\033[32m"
-GRAY="\033[90m"
-RED="\033[31m"
+NOOTY_VERSION="0.2.0"
+REPO_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/${NOOTY_VERSION}/nooty.go"
+INSTALL_DIR="/usr/local/bin"
+BINARY_NAME="nooty"
 
-echo -e "\n${BOLD}${CYAN}⚡ Installing NootyCLI v0.2.0...${RESET}\n"
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
 
-# Check Go Compiler
-if ! command -v go &> /dev/null; then
-    echo -e "${RED}❌ Go is not installed on this system.${RESET}"
-    echo -e "${GRAY}Please install Go first (e.g., 'brew install go') and try again.${RESET}\n"
+progress_bar() {
+    local duration=$1
+    local steps=20
+    for ((i=0; i<=steps; i++)); do
+        local percent=$(( i * 100 / steps ))
+        local filled=$(( percent / 5 ))
+        local empty=$(( 20 - filled ))
+        printf "\r[${CYAN}%-${filled}s${NC}%-${empty}s] %d%%" | tr ' ' '#' | tr ' ' '.'
+        sleep "$(echo "scale=2; $duration / $steps" | bc)"
+    done
+    echo
+}
+
+echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   NootyCLI v${NOOTY_VERSION} – Smart Installer       ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+echo
+
+# Detect OS
+OS="$(uname -s)"
+if [[ "$OS" == "Darwin" ]]; then
+    echo -e "${CYAN}✓ macOS detected${NC}"
+elif [[ "$OS" == "Linux" ]]; then
+    echo -e "${CYAN}✓ Linux detected${NC}"
+else
+    echo -e "${RED}Unsupported OS: $OS${NC}"
     exit 1
 fi
 
-# Create Temp Build Directory
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-echo -e "${GRAY}• Downloading source code from GitHub...${RESET}"
-curl -sSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/0.2.0/main.go" -o "$TMP_DIR/main.go"
-
-# Compile inside Temp Dir
-echo -e "${GRAY}• Compiling NootyCLI binary...${RESET}"
-cd "$TMP_DIR"
-go mod init nooty > /dev/null 2>&1 || true
-go build -ldflags="-s -w" -o nooty main.go
-
-# Install to /usr/local/bin
-echo -e "${GRAY}• Registering binary in system path...${RESET}"
-if [ -w /usr/local/bin ]; then
-    mv nooty /usr/local/bin/nooty
-    ln -sf /usr/local/bin/nooty /usr/local/bin/nootycli
+# Check Go
+if command -v go &> /dev/null; then
+    echo -e "${GREEN}✓ Go is already installed ($(go version | awk '{print $3}'))${NC}"
 else
-    sudo mv nooty /usr/local/bin/nooty
-    sudo ln -sf /usr/local/bin/nooty /usr/local/bin/nootycli
+    echo -e "${YELLOW}Go not found. Installing...${NC}"
+    if [[ "$OS" == "Darwin" ]]; then
+        if ! command -v brew &> /dev/null; then
+            echo "Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        echo "Installing Go via Homebrew..."
+        brew install go
+    elif [[ "$OS" == "Linux" ]]; then
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq golang-go
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y golang
+        else
+            echo -e "${RED}Cannot install Go automatically. Please install Go manually.${NC}"
+            exit 1
+        fi
+    fi
+    echo -e "${GREEN}✓ Go installed successfully${NC}"
 fi
 
-chmod +x /usr/local/bin/nooty
+# Download nooty.go
+echo -e "Downloading nooty.go..."
+curl -fsSL "$REPO_URL" -o /tmp/nooty.go
+echo -e "${GREEN}✓ Downloaded${NC}"
 
-echo -e "\n${GREEN}${BOLD}✓ NootyCLI successfully installed!${RESET}"
-echo -e "${GRAY}Run ${RESET}${BOLD}nooty${RESET}${GRAY} or ${RESET}${BOLD}nootycli${RESET}${GRAY} to launch.${RESET}\n"
+# Build
+echo -e "Building NootyCLI..."
+cd /tmp
+go build -o "$BINARY_NAME" nooty.go
+echo -e "${GREEN}✓ Build successful${NC}"
+
+# Install binary
+echo -e "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
+sudo mv "$BINARY_NAME" "$INSTALL_DIR/"
+sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+echo -e "${GREEN}✓ Installed${NC}"
+
+# Clean up
+rm /tmp/nooty.go
+
+# Show progress bar for fun
+echo -e "\nFinalizing..."
+progress_bar 1.5
+
+echo -e "\n${GREEN}NootyCLI v${NOOTY_VERSION} is ready!${NC}"
+echo -e "Run it by typing: ${CYAN}nooty${NC}"
