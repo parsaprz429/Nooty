@@ -102,11 +102,11 @@ if [ -f "$BIN_TARGET" ]; then
     $SUDO rm -f "$BIN_TARGET"
 fi
 
-# ۴. دانلود دقیق کد اصلی از GitHub (با دقت به بزرگ/کوچک بودن Beta)
+# ۴. دانلود دقیق کد اصلی از GitHub
 BUILD_DIR=$(mktemp -d)
 echo -e "${BLUE}📥 [4/5] Downloading latest NootyCLI source code...${NC}"
 
-# ⚡ اصلاح لینک به Beta با B بزرگ
+# ⚡ لینک دقیق با Beta (حرف بزرگ)
 SOURCE_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/Beta/nooty.go?v=$(date +%s)"
 
 curl -fsSL "$SOURCE_URL" -o "$BUILD_DIR/nooty.go"
@@ -118,7 +118,7 @@ if [ ! -s "$BUILD_DIR/nooty.go" ]; then
 fi
 
 # ۵. کامپایل و استقرار نهایی
-echo -e "${BLUE}🔨 [5/5] Compiling NootyCLI Beta (Native Native Build)...${NC}"
+echo -e "${BLUE}🔨 [5/5] Compiling NootyCLI Beta (Native Build)...${NC}"
 cd "$BUILD_DIR"
 go mod init nooty-beta > /dev/null 2>&1
 
