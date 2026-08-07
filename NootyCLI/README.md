@@ -35,7 +35,7 @@
 کافیست دستور تک‌خطی زیر را در ترمینال مک‌بوک (macOS) یا لینوکس (Linux) خود وارد کنید:
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/install.sh?v=$(date +%s)" | bash
-
+```
 > ⚡ **نکته:** اسکریپت نصب به صورت خودکار معماری پردازنده شما (arm64 یا amd64) را تشخیص داده و فایل اجرایی را در مسیر `/usr/local/bin/nooty` قرار می‌دهد.
 
 ---
@@ -90,11 +90,3 @@ curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/in
 
 - **Official Website:** [cli.nooty.ir](https://cli.nooty.ir)
 - **Support:** support@nooty.ir
-
----
-Crafted with ❤️ by Parsa — Powered by Nooty Ecosystem 🚀
-
-
----
-
-کافیه این باکس رو کپی کنی و جایگزین بکنی، دقیقاً مثل یه مستند استاندارد و شیک تو گیت‌هاب نمایش داده می‌شه! 🔥✨
