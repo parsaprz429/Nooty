@@ -1,5 +1,5 @@
-// nooty.go — NootyCLI v0.3.0 "Radin Edge" – Agentic Terminal Intelligence
-// Single‑file, zero external dependencies, cross-platform (macOS / Linux / Windows / WSL).
+// nooty.go — NootyCLI v0.3.0 "Radin Pro" – Agentic Terminal Intelligence
+// Single‑file, zero external dependencies, cross‑platform (macOS / Linux / Windows / WSL).
 //
 // 🚀 Compile & Build:
 //   go build -ldflags="-s -w" -o nooty nooty.go
@@ -7,9 +7,10 @@
 // 🛠 Commands:
 //   /config       → Interactive configuration wizard
 //   /model list   → Browse & select available models
-//   /mode cli     → Switch to Autonomous Agent Mode
-//   /dns          → View Anti-Sanction Smart DNS Shield status
+//   /mode cli     → Switch to Autonomous Agent Mode (uses native function calling)
+//   /dns          → View Anti‑Sanction Smart DNS Shield chain
 //   /doctor       → Run full network connection & provider diagnostic
+//   /version      → Show current version
 
 package main
 
@@ -32,6 +33,9 @@ import (
 	"strings"
 	"time"
 )
+
+// ---------- Version ----------
+const VERSION = "0.3.0"
 
 // ---------- Cross-Platform ANSI Styling Engine ----------
 var useColor = true
@@ -83,50 +87,50 @@ type Memory struct {
 
 type Message struct {
 	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	Name       string     `json:"name,omitempty"`
-	ToolCalls  []APITool  `json:"tool_calls,omitempty"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
 }
 
-type APITool struct {
+type ToolCall struct {
 	ID       string `json:"id"`
-	Type     string `json:"type"`
+	Type     string `json:"type"` // "function"
 	Function struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
 }
 
-type ToolDefinition struct {
-	Type     string `json:"type"`
-	Function struct {
-		Name        string                 `json:"name"`
-		Description string                 `json:"description"`
-		Parameters  map[string]interface{} `json:"parameters"`
-	} `json:"function"`
+type ChatCompletionRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	Stream   bool      `json:"stream,omitempty"`
+	Tools    []Tool    `json:"tools,omitempty"`
 }
 
-type ChatRequest struct {
-	Model    string           `json:"model"`
-	Messages []Message        `json:"messages"`
-	Stream   bool             `json:"stream"`
-	Tools    []ToolDefinition `json:"tools,omitempty"`
+type Tool struct {
+	Type     string   `json:"type"` // "function"
+	Function Function `json:"function"`
 }
 
-type ChatStreamChunk struct {
+type Function struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+type ChatCompletionResponse struct {
 	Choices []struct {
+		Message struct {
+			Role      string     `json:"role"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
+		} `json:"message"`
 		Delta struct {
-			Content   string    `json:"content"`
-			ToolCalls []APITool `json:"tool_calls,omitempty"`
-		} `json:"delta"`
+			Content string `json:"content"`
+		} `json:"delta,omitempty"`
 	} `json:"choices"`
-}
-
-type ToolCall struct {
-	ID   string
-	Name string
-	Args map[string]string
 }
 
 type DNSResolver struct {
@@ -139,7 +143,7 @@ var (
 	config          Config
 	memories        []Memory
 	sessionMessages []Message
-	currentMode     = "chat" // "chat" or "cli"
+	currentMode     = "chat"
 	workspace       string
 	homeDir         string
 	nootyDir        string
@@ -159,7 +163,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "NootyCLI v0.3.0 — Agentic Terminal Intelligence\n\nUsage:\n  nooty [options]\n\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "NootyCLI v%s — Agentic Terminal Intelligence\n\nUsage:\n  nooty [options]\n\nOptions:\n", VERSION)
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -191,6 +195,9 @@ func main() {
 	workspace = config.Workspace
 
 	drawHeader()
+	if config.APIKey == "" {
+		fmt.Printf("%s⚠️  API key is not configured. Run %s/config%s to set it up.%s\n\n", yellow, c(bold)+c(green), c(yellow), c(reset))
+	}
 	repl()
 }
 
@@ -201,17 +208,16 @@ func drawHeader() {
 
 	fmt.Println(c(cyan) + "┌" + line + "┐" + c(reset))
 	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(bold)+c(yellow), centerText(" NOOTY CLI ", width-2), c(cyan), c(reset))
-	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.3.0 Radin Edge — Agentic Terminal Intelligence", width-2), c(cyan), c(reset))
+	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v"+VERSION+" Radin Pro — Agentic Terminal Intelligence", width-2), c(cyan), c(reset))
 	fmt.Println(c(cyan) + "├" + line + "┤" + c(reset))
 
 	prettyWorkspace := formatPath(workspace)
-
 	entries := [][]string{
 		{"Provider", truncateString(config.ProviderEndpoint, 38)},
 		{"Model", config.Model},
 		{"API Key", maskAPIKey(config.APIKey)},
 		{"Workspace", truncateString(prettyWorkspace, 38)},
-		{"DNS Shield", activeDNSName + " (API Only)"},
+		{"DNS Shield", activeDNSName},
 		{"Mode", strings.ToUpper(currentMode) + " Mode"},
 	}
 
@@ -249,7 +255,7 @@ func truncateString(s string, max int) string {
 
 func maskAPIKey(key string) string {
 	if key == "" {
-		return "(not configured - run /config)"
+		return "(not configured)"
 	}
 	if len(key) <= 8 {
 		return key[:1] + strings.Repeat("*", len(key)-1)
@@ -298,10 +304,12 @@ func handleSlashCommand(cmd string) {
 	switch parts[0] {
 	case "/help":
 		printHelp()
+	case "/version":
+		fmt.Printf("NootyCLI version %s\n", VERSION)
 	case "/mode":
 		if len(parts) > 1 && parts[1] == "cli" {
 			currentMode = "cli"
-			fmt.Println(c(green) + "🛠 Switched to Agent Mode (Tool Execution Enabled)." + c(reset))
+			fmt.Println(c(green) + "🛠 Switched to Agent Mode (Native Function Calling Enabled)." + c(reset))
 		} else {
 			currentMode = "chat"
 			fmt.Println(c(green) + "💬 Switched to Conversational Chat Mode." + c(reset))
@@ -344,6 +352,7 @@ func printHelp() {
 	fmt.Println(c(bold) + "\n📌 NootyCLI Command Reference:" + c(reset))
 	fmt.Println(`
   /help                        Show command help overview
+  /version                     Display version number
   /mode [chat|cli]             Toggle Chat or Agentic CLI Execution Mode
   /config                      Interactive wizard to setup API key, endpoint & model
   /workspace show|set <path>   Manage current working directory
@@ -356,7 +365,8 @@ func printHelp() {
   /clear                       Reset current screen & session memory
   /exit                        Terminate NootyCLI session
 
-  💡 In Agent CLI Mode: Prefix commands with ! for direct shell execution.`)
+  💡 In Agent CLI Mode: Prefix commands with ! for direct shell execution.
+  🛡️ Anti-sanction DNS only protects Nooty's own API calls, not external shell commands.`)
 }
 
 func handleConfig() {
@@ -390,7 +400,8 @@ func handleConfig() {
 }
 
 func showDNSStatus() {
-	fmt.Println(c(bold) + "\n🛡️ Anti-Sanction Smart DNS Fallback Chain (NootyCLI API Traffic):" + c(reset))
+	fmt.Println(c(bold) + "\n🛡️ Anti-Sanction Smart DNS Fallback Chain:" + c(reset))
+	fmt.Println("⚠️  This only protects Nooty’s internal HTTP requests. Shell commands (via ! or run_command) still use your system DNS.")
 	for i, dns := range fallbackDNS {
 		status := ""
 		if dns.Name == activeDNSName {
@@ -402,7 +413,7 @@ func showDNSStatus() {
 			fmt.Printf("  %d. %-24s (%s)%s\n", i+1, dns.Name, dns.Address, status)
 		}
 	}
-	fmt.Println(c(dim) + "ℹ️ Note: DNS Shield protects NootyCLI network calls. For system package managers (apt, npm, pip), configure system DNS separately." + c(reset) + "\n")
+	fmt.Println()
 }
 
 func handleModelCommand(args []string) {
@@ -497,7 +508,7 @@ func dnsDialer(dnsServer string) func(ctx context.Context, network, address stri
 
 func httpClientForDNS(dns string) *http.Client {
 	if dns == "" {
-		return &http.Client{Timeout: 45 * time.Second}
+		return &http.Client{Timeout: 35 * time.Second}
 	}
 	resolver := &net.Resolver{
 		PreferGo: true,
@@ -506,20 +517,8 @@ func httpClientForDNS(dns string) *http.Client {
 	dialer := &net.Dialer{Resolver: resolver}
 	return &http.Client{
 		Transport: &http.Transport{DialContext: dialer.DialContext},
-		Timeout:   45 * time.Second,
+		Timeout:   35 * time.Second,
 	}
-}
-
-func getAuthHeaders() map[string]string {
-	headers := map[string]string{
-		"Content-Type": "application/json",
-		"HTTP-Referer": "https://cli.nooty.ir",
-		"X-Title":      "NootyCLI Agent",
-	}
-	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
-	}
-	return headers
 }
 
 func doWithFallback(method, url string, body []byte, headers map[string]string) (*http.Response, error) {
@@ -559,12 +558,11 @@ func doWithFallback(method, url string, body []byte, headers map[string]string) 
 }
 
 func fetchAvailableModels() ([]string, error) {
-	if config.APIKey == "" {
-		return nil, fmt.Errorf("API key is not configured. Please run /config or set OPENROUTER_API_KEY environment variable")
-	}
-
 	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/models"
-	headers := getAuthHeaders()
+	headers := map[string]string{}
+	if config.APIKey != "" {
+		headers["Authorization"] = "Bearer " + config.APIKey
+	}
 
 	resp, err := doWithFallback("GET", endpoint, nil, headers)
 	if err != nil {
@@ -594,39 +592,53 @@ func fetchAvailableModels() ([]string, error) {
 	return models, nil
 }
 
-// ---------- Tool Schema Definitions (Native Function Calling) ----------
-func getNativeToolsSchema() []ToolDefinition {
-	return []ToolDefinition{
+// ---------- Tool Definitions for Function Calling ----------
+func getToolDefinitions() []Tool {
+	return []Tool{
 		{
 			Type: "function",
-			Function: struct {
-				Name        string                 `json:"name"`
-				Description string                 `json:"description"`
-				Parameters  map[string]interface{} `json:"parameters"`
-			}{
+			Function: Function{
 				Name:        "list_files",
-				Description: "List files and directories in a given relative path",
+				Description: "List files and directories in a given path relative to workspace",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"path": map[string]interface{}{"type": "string", "description": "Relative directory path"},
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "Directory path relative to workspace, defaults to '.'",
+						},
 					},
 				},
 			},
 		},
 		{
 			Type: "function",
-			Function: struct {
-				Name        string                 `json:"name"`
-				Description string                 `json:"description"`
-				Parameters  map[string]interface{} `json:"parameters"`
-			}{
-				Name:        "read_file",
-				Description: "Read complete content of a target text file",
+			Function: Function{
+				Name:        "tree",
+				Description: "Recursively list directory tree",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"path": map[string]interface{}{"type": "string", "description": "Relative path to file"},
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "Starting directory path relative to workspace",
+						},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: Function{
+				Name:        "read_file",
+				Description: "Read file contents from a path relative to workspace",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "File path relative to workspace",
+						},
 					},
 					"required": []string{"path"},
 				},
@@ -634,18 +646,20 @@ func getNativeToolsSchema() []ToolDefinition {
 		},
 		{
 			Type: "function",
-			Function: struct {
-				Name        string                 `json:"name"`
-				Description string                 `json:"description"`
-				Parameters  map[string]interface{} `json:"parameters"`
-			}{
+			Function: Function{
 				Name:        "write_file",
-				Description: "Write or overwrite content to a file at specified path",
+				Description: "Write content to a file (overwrites if exists). Use with caution.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"path":    map[string]interface{}{"type": "string", "description": "Relative path to file"},
-						"content": map[string]interface{}{"type": "string", "description": "Full file content"},
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "File path relative to workspace",
+						},
+						"content": map[string]interface{}{
+							"type":        "string",
+							"description": "Full content to write",
+						},
 					},
 					"required": []string{"path", "content"},
 				},
@@ -653,36 +667,16 @@ func getNativeToolsSchema() []ToolDefinition {
 		},
 		{
 			Type: "function",
-			Function: struct {
-				Name        string                 `json:"name"`
-				Description string                 `json:"description"`
-				Parameters  map[string]interface{} `json:"parameters"`
-			}{
-				Name:        "run_command",
-				Description: "Execute a shell command inside workspace directory",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"command": map[string]interface{}{"type": "string", "description": "Shell command to run"},
-						"timeout": map[string]interface{}{"type": "string", "description": "Execution timeout in seconds"},
-					},
-					"required": []string{"command"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: struct {
-				Name        string                 `json:"name"`
-				Description string                 `json:"description"`
-				Parameters  map[string]interface{} `json:"parameters"`
-			}{
+			Function: Function{
 				Name:        "delete_file",
-				Description: "Permanently delete a file",
+				Description: "Delete a file. Dangerous! User confirmation required.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"path": map[string]interface{}{"type": "string", "description": "Relative path to file"},
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "File path relative to workspace",
+						},
 					},
 					"required": []string{"path"},
 				},
@@ -690,16 +684,82 @@ func getNativeToolsSchema() []ToolDefinition {
 		},
 		{
 			Type: "function",
-			Function: struct {
-				Name        string                 `json:"name"`
-				Description string                 `json:"description"`
-				Parameters  map[string]interface{} `json:"parameters"`
-			}{
+			Function: Function{
+				Name:        "search_code",
+				Description: "Search for text content in workspace files",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "Search query string",
+						},
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "Scope directory (default workspace root)",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: Function{
+				Name:        "file_info",
+				Description: "Get metadata of a file",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "File path relative to workspace",
+						},
+					},
+					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: Function{
 				Name:        "git_status",
-				Description: "Get git repository status",
+				Description: "Show git working directory status",
 				Parameters: map[string]interface{}{
 					"type":       "object",
 					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: Function{
+				Name:        "git_diff",
+				Description: "Show git diff of unstaged changes",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: Function{
+				Name:        "run_command",
+				Description: "Execute a shell command (dangerous, user confirmation required)",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"command": map[string]interface{}{
+							"type":        "string",
+							"description": "The shell command to execute",
+						},
+						"timeout": map[string]interface{}{
+							"type":        "integer",
+							"description": "Timeout in seconds (default 60)",
+						},
+					},
+					"required": []string{"command"},
 				},
 			},
 		},
@@ -709,26 +769,24 @@ func getNativeToolsSchema() []ToolDefinition {
 // ---------- Chat Execution ----------
 func handleChat(input string) {
 	if config.APIKey == "" {
-		fmt.Printf("%s⚠️ API Key is missing! Run %s/config%s to set your OpenRouter or OpenAI key.%s\n\n",
-			c(yellow), c(bold)+c(green), c(yellow), c(reset))
+		fmt.Printf("%s❌ API key missing. Please run /config first.%s\n", c(red), c(reset))
 		return
 	}
-
-	messages := buildMessages(input)
+	messages := buildMessages(input, false)
 	if currentMode == "cli" {
 		runAgentLoop(messages)
 		return
 	}
-	streamResponse(messages)
+	streamResponse(messages, false)
 }
 
-func buildMessages(userInput string) []Message {
+func buildMessages(userInput string, includeTools bool) []Message {
 	var msgs []Message
 	sysPrompt := `You are NootyCLI, an autonomous agentic terminal AI assistant.
 
 When in CHAT mode: Provide concise, expert terminal and software engineering responses.
-When in CLI mode: You act as an autonomous workspace agent. Use native Function Calling tools to read, write, search files, or execute shell commands safely.`
 
+When in CLI mode: You act as an autonomous workspace agent. You have access to tools. Use them to fulfill the user request.`
 	relevant := getRelevantMemories(userInput)
 	if len(relevant) > 0 {
 		sysPrompt += "\n\nUser Context & Memories:\n"
@@ -767,11 +825,21 @@ func getRelevantMemories(query string) []Memory {
 	return res
 }
 
-func streamResponse(messages []Message) {
-	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: true}
+func streamResponse(messages []Message, withTools bool) {
+	reqPayload := ChatCompletionRequest{
+		Model:    config.Model,
+		Messages: messages,
+		Stream:   true,
+	}
+	if withTools {
+		reqPayload.Tools = getToolDefinitions()
+	}
 	jsonData, _ := json.Marshal(reqPayload)
 	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
-	headers := getAuthHeaders()
+	headers := map[string]string{"Content-Type": "application/json"}
+	if config.APIKey != "" {
+		headers["Authorization"] = "Bearer " + config.APIKey
+	}
 
 	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
 	if err != nil {
@@ -804,7 +872,7 @@ func streamResponse(messages []Message) {
 			break
 		}
 
-		var chunk ChatStreamChunk
+		var chunk ChatCompletionResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
 			for _, choice := range chunk.Choices {
 				fmt.Print(choice.Delta.Content)
@@ -817,17 +885,15 @@ func streamResponse(messages []Message) {
 	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fullContent.String()})
 }
 
-// ---------- Agentic Plan & Execute Loop ----------
+// ---------- Agentic Plan & Execute Loop (Native Function Calling) ----------
 func runAgentLoop(messages []Message) {
-	planPrompt := append(messages, Message{Role: "user", Content: "Provide a clear, numbered execution plan to fulfill this request."})
-	fmt.Print(c(yellow) + "🤔 Analyzing & planning action sequence... " + c(reset))
-
-	planText, _, err := getModelResponse(planPrompt, false)
+	// Provide a small planning prompt
+	planMsg := append(messages, Message{Role: "user", Content: "Before using tools, outline a brief numbered plan."})
+	planText, err := getCompletionText(planMsg, true) // enable tools for planning? maybe not, but we can.
 	if err != nil {
 		fmt.Printf("%s❌ Planning failed: %v%s\n", c(red), err, c(reset))
 		return
 	}
-
 	fmt.Println("\n" + c(cyan) + c(bold) + "📋 Proposed Execution Plan:" + c(reset))
 	fmt.Println(c(cyan) + planText + c(reset) + "\n")
 
@@ -840,158 +906,161 @@ func runAgentLoop(messages []Message) {
 		return
 	}
 
+	// Now start the tool-use loop
 	msgs := append(messages,
 		Message{Role: "assistant", Content: planText},
-		Message{Role: "user", Content: "Plan approved. Proceed step by step using tools."},
+		Message{Role: "user", Content: "Plan approved. Proceed step by step using the available tools."},
 	)
 
-	for i := 0; i < 10; i++ {
-		textResp, toolCalls, err := getModelResponse(msgs, true)
+	for i := 0; i < 15; i++ {
+		response, err := getChatCompletionWithTools(msgs)
 		if err != nil {
-			fmt.Printf("%s❌ Agent Execution Error: %v%s\n", c(red), err, c(reset))
+			fmt.Printf("%s❌ Agent error: %v%s\n", c(red), err, c(reset))
 			return
 		}
 
-		// Check native tool call or text fallback
-		if len(toolCalls) == 0 {
-			fallbackCall := extractToolCallFallback(textResp)
-			if fallbackCall != nil {
-				toolCalls = []ToolCall{*fallbackCall}
-			}
+		if response.Choices[0].Message.Content != "" {
+			text := response.Choices[0].Message.Content
+			fmt.Println(c(green) + text + c(reset) + "\n")
+			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: text})
 		}
 
-		if len(toolCalls) == 0 {
-			fmt.Println("\n" + c(green) + textResp + c(reset) + "\n")
-			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: textResp})
-			return
+		if len(response.Choices[0].Message.ToolCalls) == 0 {
+			return // no more tools, finished
 		}
 
-		for _, tc := range toolCalls {
-			fmt.Printf("\n%s🔧 Agent Action [%d]: %s%s\n", c(bold)+c(yellow), i+1, tc.Name, c(reset))
-			for k, v := range tc.Args {
-				fmt.Printf("   %s%s%s: %s\n", c(dim), k, c(reset), truncateString(v, 60))
+		// Process tool calls
+		assistantMsg := Message{Role: "assistant", ToolCalls: response.Choices[0].Message.ToolCalls}
+		msgs = append(msgs, assistantMsg)
+
+		for _, tc := range response.Choices[0].Message.ToolCalls {
+			name := tc.Function.Name
+			var args map[string]string
+			if tc.Function.Arguments != "" {
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					args = map[string]string{} // fallback
+				}
+			} else {
+				args = map[string]string{}
 			}
 
-			toolResult, approved := executeAgentTool(&tc)
+			fmt.Printf("\n%s🔧 Agent Action [%d]: %s%s\n", c(bold)+c(yellow), i+1, name, c(reset))
+			for k, v := range args {
+				fmt.Printf("   %s%s%s: %s\n", c(dim), k, c(reset), v)
+			}
+
+			result, approved := executeAgentTool(name, args)
 			if !approved {
-				msgs = append(msgs, Message{Role: "user", Content: "Action denied by user safety policy."})
-				continue
+				result = "Operation denied by user safety policy."
 			}
 
-			if len(toolResult) > 3000 {
-				toolResult = toolResult[:3000] + "\n... (output truncated)"
-			}
+			fmt.Printf("%s📄 Tool Output:%s\n%s\n", c(dim), c(reset), result)
 
-			fmt.Printf("%s📄 Tool Output:%s\n%s\n", c(dim), c(reset), toolResult)
-			msgs = append(msgs, Message{Role: "user", Content: fmt.Sprintf("[Tool '%s' Output]:\n%s", tc.Name, toolResult)})
+			toolMsg := Message{
+				Role:       "tool",
+				Content:    result,
+				ToolCallID: tc.ID,
+			}
+			msgs = append(msgs, toolMsg)
+			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fmt.Sprintf("[Tool %s]\n%s", name, result)})
 		}
 	}
-	fmt.Printf("%s⚠️ Agent loop step limit reached (10 steps).%s\n", c(yellow), c(reset))
+	fmt.Printf("%s⚠️ Agent loop step limit reached (15 steps).%s\n", c(yellow), c(reset))
 }
 
-func getModelResponse(messages []Message, withTools bool) (string, []ToolCall, error) {
-	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: false}
-	if withTools {
-		reqPayload.Tools = getNativeToolsSchema()
+func getChatCompletionWithTools(messages []Message) (*ChatCompletionResponse, error) {
+	reqPayload := ChatCompletionRequest{
+		Model:    config.Model,
+		Messages: messages,
+		Tools:    getToolDefinitions(),
 	}
-
 	jsonData, _ := json.Marshal(reqPayload)
 	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
-	headers := getAuthHeaders()
+	headers := map[string]string{"Content-Type": "application/json"}
+	if config.APIKey != "" {
+		headers["Authorization"] = "Bearer " + config.APIKey
+	}
 
 	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content   string    `json:"content"`
-				ToolCalls []APITool `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
+	var result ChatCompletionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", nil, err
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+func getCompletionText(messages []Message, withTools bool) (string, error) {
+	reqPayload := ChatCompletionRequest{
+		Model:    config.Model,
+		Messages: messages,
+	}
+	if withTools {
+		reqPayload.Tools = getToolDefinitions()
+	}
+	jsonData, _ := json.Marshal(reqPayload)
+	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
+	headers := map[string]string{"Content-Type": "application/json"}
+	if config.APIKey != "" {
+		headers["Authorization"] = "Bearer " + config.APIKey
+	}
+
+	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result ChatCompletionResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
 	}
 	if len(result.Choices) == 0 {
-		return "", nil, fmt.Errorf("empty choices array in response")
+		return "", fmt.Errorf("empty choices")
 	}
-
-	msg := result.Choices[0].Message
-	var parsedCalls []ToolCall
-
-	for _, tc := range msg.ToolCalls {
-		argsMap := map[string]string{}
-		_ = json.Unmarshal([]byte(tc.Function.Arguments), &argsMap)
-		parsedCalls = append(parsedCalls, ToolCall{
-			ID:   tc.ID,
-			Name: tc.Function.Name,
-			Args: argsMap,
-		})
-	}
-
-	return msg.Content, parsedCalls, nil
+	return result.Choices[0].Message.Content, nil
 }
 
-func extractToolCallFallback(text string) *ToolCall {
-	re := regexp.MustCompile(`(?i)TOOL:\s*(\w+)\s+(.*)`)
-	matches := re.FindStringSubmatch(text)
-	if len(matches) >= 3 {
-		args := map[string]string{}
-		argsStr := matches[2]
-		reArgs := regexp.MustCompile(`(\w+)=("(?:[^"\\]|\\.)*"|'\S+')`)
-		mArgs := reArgs.FindAllStringSubmatch(argsStr, -1)
-		for _, m := range mArgs {
-			if len(m) == 3 {
-				val := strings.Trim(m[2], `"'`)
-				args[m[1]] = val
-			}
-		}
-		if len(args) == 0 {
-			args["path"] = strings.TrimSpace(argsStr)
-		}
-		return &ToolCall{Name: matches[1], Args: args}
+func executeAgentTool(name string, args map[string]string) (string, bool) {
+	needsApproval := false
+	switch name {
+	case "write_file", "delete_file", "run_command":
+		needsApproval = true
 	}
-	return nil
-}
-
-func executeAgentTool(tc *ToolCall) (string, bool) {
-	needsApproval := true
-	switch tc.Name {
-	case "list_files", "tree", "read_file", "search_code", "file_info", "git_status", "git_diff":
-		needsApproval = false
-	}
-
 	if needsApproval {
-		if tc.Name == "delete_file" {
-			fmt.Printf("%s⚠️ SAFETY WARNING: %s will permanently delete target file!%s\n", c(red), tc.Name, c(reset))
+		if name == "delete_file" {
+			fmt.Printf("%s⚠️ SAFETY WARNING: %s will permanently delete target file!%s\n", c(red), name, c(reset))
 			fmt.Print("Type DELETE to confirm action: ")
-			reader := bufio.NewReader(os.Stdin)
-			confirm, _ := reader.ReadString('\n')
-			if strings.TrimSpace(confirm) != "DELETE" {
-				return "Operation aborted by safety check.", false
-			}
 		} else {
 			fmt.Print("Confirm execution? [Y/n]: ")
-			reader := bufio.NewReader(os.Stdin)
-			confirm, _ := reader.ReadString('\n')
-			confirm = strings.TrimSpace(strings.ToLower(confirm))
-			if confirm == "n" || confirm == "no" {
-				return "Operation cancelled by user.", false
+		}
+		reader := bufio.NewReader(os.Stdin)
+		confirm, _ := reader.ReadString('\n')
+		confirm = strings.TrimSpace(strings.ToLower(confirm))
+		if name == "delete_file" {
+			if confirm != "DELETE" {
+				return "Operation aborted by safety check.", false
 			}
+		} else if confirm == "n" || confirm == "no" {
+			return "Operation cancelled by user.", false
 		}
 	}
 
-	result, err := runTool(tc.Name, tc.Args)
+	result, err := runTool(name, args)
 	if err != nil {
 		return fmt.Sprintf("Tool Error: %v", err), true
 	}
@@ -1022,6 +1091,13 @@ func runTool(name string, args map[string]string) (string, error) {
 		}
 		return strings.Join(names, "\n"), nil
 
+	case "tree":
+		path := workspace
+		if p, ok := args["path"]; ok && p != "" && p != "." {
+			path = safeJoin(workspace, p)
+		}
+		return dirTree(path, ""), nil
+
 	case "read_file":
 		path := safeJoin(workspace, args["path"])
 		data, err := os.ReadFile(path)
@@ -1030,7 +1106,7 @@ func runTool(name string, args map[string]string) (string, error) {
 		}
 		return string(data), nil
 
-	case "write_file", "create_file":
+	case "write_file":
 		path := safeJoin(workspace, args["path"])
 		content := args["content"]
 		_ = os.MkdirAll(filepath.Dir(path), 0755)
@@ -1047,6 +1123,37 @@ func runTool(name string, args map[string]string) (string, error) {
 		}
 		return "✅ File removed: " + args["path"], nil
 
+	case "search_code":
+		query := args["query"]
+		scope := workspace
+		if s, ok := args["path"]; ok && s != "" {
+			scope = safeJoin(workspace, s)
+		}
+		var results []string
+		_ = filepath.Walk(scope, func(p string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || info.Size() > 1_000_000 || strings.HasPrefix(info.Name(), ".") {
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err == nil && strings.Contains(string(data), query) {
+				rel, _ := filepath.Rel(workspace, p)
+				results = append(results, rel)
+			}
+			return nil
+		})
+		if len(results) == 0 {
+			return "No matches found.", nil
+		}
+		return strings.Join(results, "\n"), nil
+
+	case "file_info":
+		path := safeJoin(workspace, args["path"])
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Path: %s\nSize: %d bytes\nMode: %s\nModTime: %s", path, info.Size(), info.Mode(), info.ModTime().Format(time.RFC3339)), nil
+
 	case "git_status":
 		cmd := exec.Command("git", "status", "--short")
 		cmd.Dir = workspace
@@ -1060,10 +1167,23 @@ func runTool(name string, args map[string]string) (string, error) {
 		}
 		return s, nil
 
+	case "git_diff":
+		cmd := exec.Command("git", "diff")
+		cmd.Dir = workspace
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git diff error: %v", err)
+		}
+		s := string(out)
+		if s == "" {
+			s = "(no uncommitted changes)"
+		}
+		return s, nil
+
 	case "run_command":
 		cmdStr := args["command"]
 		timeout := 60
-		if t, ok := args["timeout"]; ok {
+		if t, ok := args["timeout"]; ok && t != "" {
 			_, _ = fmt.Sscanf(t, "%d", &timeout)
 		}
 
@@ -1107,6 +1227,27 @@ func runTool(name string, args map[string]string) (string, error) {
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
+func dirTree(root, indent string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err.Error()
+	}
+	var out string
+	for i, e := range entries {
+		prefix := indent + "├── "
+		childIndent := indent + "│   "
+		if i == len(entries)-1 {
+			prefix = indent + "└── "
+			childIndent = indent + "    "
+		}
+		out += prefix + e.Name() + "\n"
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			out += dirTree(filepath.Join(root, e.Name()), childIndent)
+		}
+	}
+	return out
+}
+
 func safeJoin(base, rel string) string {
 	abs := filepath.Join(base, rel)
 	abs = filepath.Clean(abs)
@@ -1120,6 +1261,7 @@ func safeJoin(base, rel string) string {
 func handleShellBang(cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	fmt.Printf("\n%s⚡ Direct Shell Command:%s %s\n", c(yellow), c(reset), cmd)
+	fmt.Println("⚠️  This command uses your system DNS, not Nooty’s bypass.")
 	fmt.Print("Execute? [Y/n]: ")
 	reader := bufio.NewReader(os.Stdin)
 	resp, _ := reader.ReadString('\n')
@@ -1176,6 +1318,7 @@ func handleWorkspace(args []string) {
 
 func runDoctor() {
 	fmt.Println(c(bold) + "\n🏥 NootyCLI Diagnostic Doctor" + c(reset))
+	fmt.Printf("• Version           : %s\n", VERSION)
 	fmt.Printf("• Provider Endpoint : %s\n", config.ProviderEndpoint)
 	fmt.Printf("• Active Model      : %s\n", config.Model)
 	fmt.Printf("• API Key           : %s\n", maskAPIKey(config.APIKey))
@@ -1188,6 +1331,7 @@ func runDoctor() {
 	} else {
 		fmt.Printf("%sOK (%d models accessible via %s)%s\n\n", c(green), len(models), activeDNSName, c(reset))
 	}
+	fmt.Println("• DNS Shield only protects LLM API calls. External commands use your system resolver.")
 }
 
 func handleMemory(args []string) {
@@ -1263,6 +1407,8 @@ func showHistory() {
 		role := "👤 User"
 		if msg.Role == "assistant" {
 			role = "🤖 Nooty"
+		} else if msg.Role == "tool" {
+			role = "🛠️ Tool"
 		}
 		fmt.Printf("%s%s:%s %s\n", c(bold), role, c(reset), msg.Content)
 	}
@@ -1274,27 +1420,23 @@ func loadConfig() {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		config = Config{
-			ProviderEndpoint: "https://openrouter.ai/api/v1",
-			APIKey:           getEnvAPIKey(),
-			Model:            "poolside/laguna-s-2.1:free",
+			ProviderEndpoint: "https://api.openai.com/v1",
+			APIKey:           os.Getenv("OPENAI_API_KEY"),
+			Model:            "gpt-4o-mini",
 			Safety:           "strict",
+		}
+		if config.APIKey == "" {
+			config.APIKey = os.Getenv("NOOTY_API_KEY")
 		}
 		return
 	}
 	_ = json.Unmarshal(data, &config)
 	if config.APIKey == "" {
-		config.APIKey = getEnvAPIKey()
+		config.APIKey = os.Getenv("OPENAI_API_KEY")
+		if config.APIKey == "" {
+			config.APIKey = os.Getenv("NOOTY_API_KEY")
+		}
 	}
-}
-
-func getEnvAPIKey() string {
-	if k := os.Getenv("OPENROUTER_API_KEY"); k != "" {
-		return k
-	}
-	if k := os.Getenv("OPENAI_API_KEY"); k != "" {
-		return k
-	}
-	return os.Getenv("NOOTY_API_KEY")
 }
 
 func saveConfig() {
