@@ -1,45 +1,58 @@
 #!/bin/bash
 
-# 🧪 NootyCLI Beta Smart One-Command Installer
+# 🧪 NootyCLI Beta Cross-Platform Smart Installer
+# Ecosystem: Nooty (nooty.ir) | Author: Parsa
 set -e
 
-# رنگ‌بندی ترمینال 🎨
+# تنظیم رنگ‌های استاندارد و زنده 🎨
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
-NC='\033[0m'
+BOLD='\033[1m'
+NC='\033[0m' # Reset
 
-echo -e "${CYAN}"
-echo "   _  _                 _            ___  _    ___ "
-echo "  | \| |___  ___ |_ _ _ _   / C \ | |  |_ _|"
-echo "  | .\` / _ \/ _ \  | || '_| |  __/ | |__ | | "
-echo "  |_|\_\___/\___/  |_||_|    \___| |____|___|"
-echo "            🚀 Beta Installer v0.3.0"
-echo -e "${NC}"
+clear
+echo -e "${CYAN}${BOLD}"
+echo "  _  _                 _             ___  _    ___ "
+echo " | \| |___  ___ |_ _ _ _   / C \ | |  |_ _|"
+echo " | .\` / _ \/ _ \  | || '_| |  __/ | |__ | | "
+echo " |_|\_\___/\___/  |_||_|    \___| |____|___|"
+echo "          🚀 Beta Installer v0.3.0 (Radin Edge)"
+echo -e "${NC}\n"
 
-echo -e "${BLUE}🔎 Detecting System Environment...${NC}"
+echo -e "${BLUE}🔎 [1/5] Analyzing OS & Environment...${NC}"
 
-# ۱. تشخیص سیستم‌عامل و مدیریت برنامه‌ساز (Package Manager)
-OS="$(uname -s)"
-ARCH="$(uname -m)"
+# ۱. تشخیص دقیق سیستم‌عامل و معماری
+OS_RAW="$(uname -s)"
+ARCH_RAW="$(uname -m)"
 
+OS="Unknown"
+case "$OS_RAW" in
+    Linux*)     OS="Linux" ;;
+    Darwin*)    OS="macOS" ;;
+    CYGWIN*|MINGW*|MSYS*) OS="Windows" ;;
+    *)          OS="$OS_RAW" ;;
+esac
+
+echo -e "${GREEN}✨ Detected OS:${NC} ${BOLD}$OS${NC} (${ARCH_RAW})"
+
+# مدیریت دسترسی Root / Sudo
 SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$OS" != "Windows" ] && [ "$(id -u)" -ne 0 ]; then
     if command -v sudo &> /dev/null; then
         SUDO="sudo"
     fi
 fi
 
-echo -e "${GREEN}🖥️  OS: $OS | Architecture: $ARCH${NC}"
-
-# ۲. نصب هوشمند پیش‌نیازها (Go & Curl & Git) بر اساس سیستم‌عامل
-install_packages() {
-    echo -e "${BLUE}📦 Checking & Installing dependencies (Go, Curl, Git)...${NC}"
+# ۲. مدیریت نصب پیش‌نیازها بر اساس سیستم‌عامل
+install_dependencies() {
+    echo -e "${BLUE}📦 [2/5] Auto-installing missing core dependencies (Go, Curl, Git)...${NC}"
     
     case "$OS" in
-        Linux*)
+        Linux)
             if command -v apt-get &> /dev/null; then
                 $SUDO apt-get update -qq
                 $SUDO apt-get install -y -qq curl git golang-go
@@ -50,60 +63,80 @@ install_packages() {
             elif command -v zypper &> /dev/null; then
                 $SUDO zypper install -y go curl git
             else
-                echo -e "${RED}❌ Unsupported Linux package manager. Please install Go manually.${NC}"
+                echo -e "${RED}❌ Unsupported Package Manager. Please install 'go' manually.${NC}"
                 exit 1
             fi
             ;;
-        Darwin*)
+        macOS)
             if ! command -v brew &> /dev/null; then
-                echo -e "${YELLOW}⚠️ Homebrew not found. Installing Homebrew...${NC}"
+                echo -e "${YELLOW}⚠️ Homebrew not found. Installing Homebrew first...${NC}"
                 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             fi
             brew install go curl git
             ;;
+        Windows)
+            echo -e "${RED}❌ Please install Go from https://go.dev/dl/ and run this script in Git Bash/WSL.${NC}"
+            exit 1
+            ;;
         *)
-            echo -e "${RED}❌ Unsupported Operating System: $OS${NC}"
+            echo -e "${RED}❌ Unsupported Operating System.${NC}"
             exit 1
             ;;
     esac
 }
 
-# اگر Go یا curl یا git نصب نبودند، اتوماتیک همه رو نصب کن
 if ! command -v go &> /dev/null || ! command -v curl &> /dev/null || ! command -v git &> /dev/null; then
-    install_packages
+    install_dependencies
+else
+    echo -e "${GREEN}✅ All core tools (Go, Curl, Git) are already available.${NC}"
 fi
 
-# ۳. پاکسازی نسخه قدیمی nooty-beta
-if [ -f "/usr/local/bin/nooty-beta" ]; then
-    echo -e "${YELLOW}🧹 Removing older nooty-beta binary...${NC}"
-    $SUDO rm -f /usr/local/bin/nooty-beta
+# ۳. پاکسازی نسخه قدیم جهت جلوگیری از تداخل
+BIN_TARGET="/usr/local/bin/nooty-beta"
+if [ "$OS" = "Windows" ]; then
+    BIN_TARGET="/usr/bin/nooty-beta"
 fi
 
-# ۴. دانلود سورس‌کد و کامپایل هوشمند
+if [ -f "$BIN_TARGET" ]; then
+    echo -e "${YELLOW}🧹 [3/5] Cleaning up previous Beta binary...${NC}"
+    $SUDO rm -f "$BIN_TARGET"
+fi
+
+# ۴. دانلود دقیق کد اصلی از GitHub (با دقت به بزرگ/کوچک بودن Beta)
 BUILD_DIR=$(mktemp -d)
-echo -e "${BLUE}📥 Fetching latest Beta code from GitHub...${NC}"
+echo -e "${BLUE}📥 [4/5] Downloading latest NootyCLI source code...${NC}"
 
-curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/beta/nooty.go?v=$(date +%s)" -o "$BUILD_DIR/nooty.go"
+# ⚡ اصلاح لینک به Beta با B بزرگ
+SOURCE_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/Beta/nooty.go?v=$(date +%s)"
+
+curl -fsSL "$SOURCE_URL" -o "$BUILD_DIR/nooty.go"
 
 if [ ! -s "$BUILD_DIR/nooty.go" ]; then
-    echo -e "${RED}❌ Download failed! File is empty or 404 URL.${NC}"
+    echo -e "${RED}❌ Download Failed! Check file location or network status.${NC}"
     rm -rf "$BUILD_DIR"
     exit 1
 fi
 
-echo -e "${BLUE}🔨 Compiling NootyCLI Beta...${NC}"
+# ۵. کامپایل و استقرار نهایی
+echo -e "${BLUE}🔨 [5/5] Compiling NootyCLI Beta (Native Native Build)...${NC}"
 cd "$BUILD_DIR"
 go mod init nooty-beta > /dev/null 2>&1
+
+# کامپایل بهینه‌شده با پرچم‌های کاهش حجم (-s -w)
 go build -ldflags="-s -w" -o nooty-beta nooty.go
 
-# ۵. استقرار باینری در مسیر عمومی سیستم
-echo -e "${BLUE}🚀 Installing binary to /usr/local/bin/nooty-beta...${NC}"
-$SUDO mv nooty-beta /usr/local/bin/nooty-beta
-$SUDO chmod +x /usr/local/bin/nooty-beta
+if [ $? -eq 0 ]; then
+    $SUDO mv nooty-beta "$BIN_TARGET"
+    $SUDO chmod +x "$BIN_TARGET"
+    
+    # پاکسازی کش ترمینال
+    rm -rf "$BUILD_DIR"
+    hash -r 2>/dev/null || true
 
-# پاکسازی و اتمام
-rm -rf "$BUILD_DIR"
-hash -r 2>/dev/null || true
-
-echo -e "\n${GREEN}🎉 NootyCLI Beta installed successfully!${NC}"
-echo -e "${CYAN}⚡ Just type ${YELLOW}nooty-beta${CYAN} in your terminal to start!${NC}\n"
+    echo -e "\n${GREEN}${BOLD}🎉 NootyCLI Beta (v0.3.0 Radin Edge) Installed Successfully!${NC}"
+    echo -e "${CYAN}⚡ Start exploring now by running: ${YELLOW}${BOLD}nooty-beta${NC}\n"
+else
+    echo -e "${RED}❌ Build Compilation Error! Check Go syntax.${NC}"
+    rm -rf "$BUILD_DIR"
+    exit 1
+fi
