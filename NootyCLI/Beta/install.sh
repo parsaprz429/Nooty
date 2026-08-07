@@ -96,16 +96,20 @@ if [ -f "$BIN_TARGET" ]; then
     $SUDO rm -f "$BIN_TARGET"
 fi
 
-# ۴. دانلود دقیق سورس‌کد اصلی (اصلاح لینک به Beta با B بزرگ)
+# ۴. دانلود هوشمند سورس‌کد
 BUILD_DIR=$(mktemp -d)
 echo -e "${BLUE}📥 [4/5] Downloading latest NootyCLI source code...${NC}"
 
-SOURCE_URL="https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/Beta/nooty.go?v=$(date +%s)"
+# تست دانلود nooty.go
+curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/Beta/nooty.go?v=$(date +%s)" -o "$BUILD_DIR/main.go" || true
 
-curl -fsSL "$SOURCE_URL" -o "$BUILD_DIR/nooty.go"
+# اگر nooty.go نبود، تست دانلود main.go
+if [ ! -s "$BUILD_DIR/main.go" ]; then
+    curl -fsSL "https://raw.githubusercontent.com/parsaprz429/Nooty/main/NootyCLI/Beta/main.go?v=$(date +%s)" -o "$BUILD_DIR/main.go" || true
+fi
 
-if [ ! -s "$BUILD_DIR/nooty.go" ]; then
-    echo -e "${RED}❌ Download Failed! File is empty or link is incorrect.${NC}"
+if [ ! -s "$BUILD_DIR/main.go" ]; then
+    echo -e "${RED}❌ Download Failed! Could not find 'nooty.go' or 'main.go' in /NootyCLI/Beta/ folder.${NC}"
     rm -rf "$BUILD_DIR"
     exit 1
 fi
@@ -115,7 +119,7 @@ echo -e "${BLUE}🔨 [5/5] Compiling NootyCLI Beta...${NC}"
 cd "$BUILD_DIR"
 go mod init nooty-beta > /dev/null 2>&1
 
-go build -ldflags="-s -w" -o nooty-beta nooty.go
+go build -ldflags="-s -w" -o nooty-beta main.go
 
 if [ $? -eq 0 ]; then
     $SUDO mv nooty-beta "$BIN_TARGET"
