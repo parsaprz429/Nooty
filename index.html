@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+    
+    <!-- SEO & Meta Tags -->
+    <title>راهنمای اکوسیستم نوتی | Nooty Ecosystem</title>
+    <meta name="description" content="راهنما و مستندات رسمی اکوسیستم متن‌باز نوتی (Nooty). معرفی ابزارهای هوشمند NootyPlus، NootyHide و NootyCPS با بالاترین سطح امنیت و سرعت.">
+    <meta name="keywords" content="نوتی, Nooty, جستجوی هوشمند, رمزنگاری فایل, تست سرعت کلیک, هوش مصنوعی, متن باز, گیت هاب">
+    <meta name="author" content="Parsa (Nooty Ecosystem)">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#090a0f">
+    <link rel="canonical" href="https://nooty.ir/guide.html">
+
+    <!-- Open Graph for Social Media (Telegram, Twitter, etc.) -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="اکوسیستم قدرتمند نوتی (Nooty)">
+    <meta property="og:description" content="مجموعه‌ای از ابزارهای هوشمند، امن و سریعِ وب. بدون تبلیغات و کاملاً متن‌باز.">
+    <meta property="og:image" content="https://nooty.ir/logo.png">
+    <meta property="og:url" content="https://nooty.ir">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="https://nooty.ir/logo.png">
+
+    <style>
+        /* Typography & Variables */
+        @font-face {
+            font-family: 'Vazirmatn';
+            src: url('https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.0.0/Vazirmatn-font-face.css');
+            font-display: swap;
+        }
+
+        :root {
+            --bg-color: #090a0f;
+            --surface-color: rgba(255, 255, 255, 0.03);
+            --surface-hover: rgba(255, 255, 255, 0.08);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #8ab4f8;
+            --primary-glow: rgba(138, 180, 248, 0.2);
+            --secondary: #34d399;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --radius-md: 16px;
+            --radius-lg: 24px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Reset & Base */
+        * {
+            margin: 0; padding: 0; box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Vazirmatn', system-ui, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.7;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(138, 180, 248, 0.04), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(52, 211, 153, 0.04), transparent 25%);
+        }
+
+        /* Layout */
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header / Navbar */
+        header {
+            position: fixed;
+            top: 0; width: 100%;
+            background: rgba(9, 10, 15, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            z-index: 1000;
+        }
+
+        .navbar {
+            display: flex; justify-content: space-between; align-items: center;
+            height: 70px;
+        }
+
+        .brand {
+            display: flex; align-items: center; gap: 12px;
+            text-decoration: none; color: var(--text-main);
+            font-size: 1.4rem; font-weight: 800;
+        }
+
+        .brand img { width: 40px; height: 40px; border-radius: 12px; }
+        .brand span { color: var(--primary); }
+
+        .nav-links { display: flex; gap: 24px; }
+        .nav-links a {
+            color: var(--text-muted); text-decoration: none;
+            font-weight: 500; transition: var(--transition);
+        }
+        .nav-links a:hover { color: var(--primary); }
+
+        /* Hero Section */
+        .hero {
+            padding: 160px 0 80px;
+            text-align: center;
+            position: relative;
+        }
+        
+        .hero h1 {
+            font-size: 3.5rem; font-weight: 900; margin-bottom: 24px;
+            background: linear-gradient(135deg, #fff 0%, var(--primary) 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+
+        .hero p {
+            font-size: 1.2rem; color: var(--text-muted); max-width: 600px;
+            margin: 0 auto 40px;
+        }
+
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            gap: 10px; padding: 14px 28px; border-radius: 12px;
+            font-size: 1rem; font-weight: 700; text-decoration: none;
+            transition: var(--transition); border: 1px solid transparent;
+        }
+
+        .btn-primary {
+            background: var(--primary); color: #000;
+            box-shadow: 0 8px 24px var(--primary-glow);
+        }
+        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 12px 32px var(--primary-glow); }
+
+        .btn-outline {
+            background: transparent; color: var(--text-main);
+            border-color: var(--border-color);
+        }
+        .btn-outline:hover { background: var(--surface-color); border-color: var(--text-muted); }
+
+        /* Features / Projects Section */
+        .section-title {
+            text-align: center; font-size: 2rem; font-weight: 800;
+            margin-bottom: 48px; color: var(--text-main);
+        }
+
+        .projects-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px; margin-bottom: 80px;
+        }
+
+        .card {
+            background: var(--surface-color); border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg); padding: 32px;
+            transition: var(--transition); position: relative; overflow: hidden;
+        }
+
+        .card:hover {
+            transform: translateY(-5px); border-color: var(--primary);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            background: var(--surface-hover);
+        }
+
+        .card-icon {
+            font-size: 2.5rem; margin-bottom: 20px; display: inline-block;
+        }
+
+        .card-title { font-size: 1.5rem; font-weight: 800; margin-bottom: 12px; color: var(--text-main); }
+        .card-desc { font-size: 0.95rem; color: var(--text-muted); margin-bottom: 24px; }
+        
+        .tech-stack {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px;
+        }
+        .tech-badge {
+            background: rgba(255, 255, 255, 0.05); padding: 4px 12px;
+            border-radius: 8px; font-size: 0.8rem; color: var(--primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .card-link {
+            display: inline-flex; align-items: center; gap: 6px;
+            color: var(--secondary); text-decoration: none; font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .card-link:hover { text-decoration: underline; }
+
+        /* Open Source Banner */
+        .github-banner {
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.03), rgba(138, 180, 248, 0.05));
+            border: 1px solid var(--border-color); border-radius: var(--radius-lg);
+            padding: 48px; text-align: center; margin-bottom: 80px;
+        }
+        .github-banner h2 { font-size: 2rem; margin-bottom: 16px; }
+        .github-banner p { color: var(--text-muted); margin-bottom: 32px; font-size: 1.1rem; }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border-color);
+            padding: 40px 0; text-align: center; color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        footer a { color: var(--primary); text-decoration: none; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2.5rem; }
+            .hero p { font-size: 1rem; }
+            .nav-links { display: none; } /* Mobile menu can be added later */
+            .github-banner { padding: 32px 16px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Navigation -->
+    <header>
+        <div class="container navbar">
+            <a href="#" class="brand">
+                <img src="https://nooty.ir/logo.png" alt="Nooty Logo" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%238ab4f8%22/></svg>'">
+                <span>Nooty</span> Docs
+            </a>
+            <nav class="nav-links">
+                <a href="#projects">ابزارها</a>
+                <a href="#opensource">متن‌باز</a>
+                <a href="https://github.com/parsaprz429/Nooty" target="_blank">گیت‌هاب 💻</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Hero Section -->
+        <section class="hero">
+            <h1>به دنیای <span>Nooty</span> خوش آمدید</h1>
+            <p>یک اکوسیستم قدرتمند، امن و بدون مرز. طراحی شده با عشق و معماری پیشرفته برای ارائه ابزارهای کاربردی وب بدون هیچ‌گونه افت سرعت و تجاوز به حریم خصوصی.</p>
+            <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+                <a href="#projects" class="btn btn-primary">مرور ابزارها 🚀</a>
+                <a href="https://github.com/parsaprz429/Nooty" target="_blank" class="btn btn-outline">مخزن گیت‌هاب 📦</a>
+            </div>
+        </section>
+
+        <!-- Projects / Ecosystem -->
+        <section id="projects">
+            <h2 class="section-title">ابزارهای اکوسیستم نوتی</h2>
+            <div class="projects-grid">
+                
+                <!-- NootyPlus -->
+                <div class="card">
+                    <div class="card-icon">🔍</div>
+                    <h3 class="card-title">NootyPlus Search</h3>
+                    <p class="card-desc">موتور جستجوی اختصاصی و فوق‌سریع. ارسال درخواست همزمان به گوگل، یاهو، داک‌داک‌گو و ویکی‌پدیا با سیستم امتیازدهی هوشمند.</p>
+                    <div class="tech-stack">
+                        <span class="tech-badge">PHP 8</span>
+                        <span class="tech-badge">cURL Multi</span>
+                        <span class="tech-badge">Parallel Exec</span>
+                    </div>
+                    <a href="nooty-plus/search.php" class="card-link">ورود به موتور جستجو ←</a>
+                </div>
+
+                <!-- NootyHide -->
+                <div class="card">
+                    <div class="card-icon">🔐</div>
+                    <h3 class="card-title">NootyHide</h3>
+                    <p class="card-desc">ابزار رمزنگاری متون با استاندارد نظامی AES-256-GCM. کاملاً سمت کلاینت (Zero-Knowledge) بدون ارسال هیچ داده‌ای به سرور.</p>
+                    <div class="tech-stack">
+                        <span class="tech-badge">Web Crypto API</span>
+                        <span class="tech-badge">Zero-Knowledge</span>
+                        <span class="tech-badge">JS</span>
+                    </div>
+                    <a href="nooty-hide/index.html" class="card-link">شروع رمزنگاری امن ←</a>
+                </div>
+
+                <!-- NootyCPS -->
+                <div class="card">
+                    <div class="card-icon">⚡</div>
+                    <h3 class="card-title">NootyCPS</h3>
+                    <p class="card-desc">سنجش دقیق سرعت کلیک (Click Per Second) با دقت میکروثانیه. دارای سیستم Anti-Cheat پیشرفته و طراحی Glassmorphism.</p>
+                    <div class="tech-stack">
+                        <span class="tech-badge">Performance API</span>
+                        <span class="tech-badge">Anti-Cheat</span>
+                        <span class="tech-badge">CSS Variables</span>
+                    </div>
+                    <a href="nooty-cps/index.html" class="card-link">تست سرعت کلیک ←</a>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Open Source Section -->
+        <section id="opensource" class="github-banner">
+            <h2>ما به دنیای متن‌باز باور داریم ❤️</h2>
+            <p>تمام کدهای اصلی هسته اکوسیستم نوتی شامل منطق‌های رمزنگاری، سیستم اجرای موازی جستجو و فرمول‌های محاسباتی به صورت کاملاً آزاد در گیت‌هاب منتشر شده‌اند.</p>
+            
+            <a href="https://github.com/parsaprz429/Nooty" target="_blank" class="btn btn-outline" style="background: rgba(255,255,255,0.05);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="margin-left:8px;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                مشارکت در مخزن گیت‌هاب Nooty
+            </a>
+            
+            <p style="font-size: 0.9rem; margin-top: 24px; color: var(--text-muted);">
+                نسخه فعلی: Radin Pro (NootyCLI 0.2.2) | توسعه داده شده توسط پارسانا 👨‍💻
+            </p>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>طراحی و توسعه با 💻 و ❤️ توسط <a href="https://nooty.ir" target="_blank">پارسانا</a> در اکوسیستم Nooty.</p>
+            <p style="margin-top: 8px; opacity: 0.6;">پشتیبانی: NootySupportBot@ در بله</p>
+        </div>
+    </footer>
+
+</body>
+</html>
