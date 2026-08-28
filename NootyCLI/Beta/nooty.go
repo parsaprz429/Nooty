@@ -1,5 +1,21 @@
-// nooty.go — NootyCLI v0.3.0 "Radin Agent Core"
-// Single-file, zero external dependencies.
+// nooty.go — NootyCLI v0.3.0 "Radin Agent Core" – Agentic Terminal Intelligence
+// Single‑file, zero external dependencies, cross-platform (macOS / Linux / Windows / WSL).
+//
+// 🚀 Compile & Build:
+//   go build -ldflags="-s -w" -o nooty nooty.go
+//
+// 🛠 Commands (inside REPL):
+//   /config       → Interactive configuration wizard
+//   /model list   → Browse & select available models
+//   /mode cli     → Switch to Autonomous Agent Mode
+//   /dns          → View Anti-Sanction Smart DNS Shield chain
+//   /doctor       → Run full network connection & provider diagnostic
+//   /init         → Initialize .nooty project workspace with rules & config
+//   /undo         → Restore last snapshot (file recovery)
+//   /test         → Run project tests (auto‑detect)
+//   /review       → AI code review of git diff
+//   /session      → Save/load/reset conversation sessions
+
 package main
 
 import (
@@ -17,15 +33,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// ---------- Cross-Platform ANSI Styling Engine ----------
 var useColor = true
 
 func init() {
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("cmd", "/c", "color").Run()
+	}
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		useColor = false
 	}
@@ -51,31 +70,33 @@ const (
 	white   = "\033[37m"
 )
 
+// ---------- Data Models ----------
 type Config struct {
 	ProviderEndpoint string `json:"provider_endpoint"`
 	APIKey           string `json:"api_key"`
 	Model            string `json:"model"`
-	Safety           string `json:"safety"`
+	Safety           string `json:"safety"` // strict | balanced | auto
 	Workspace        string `json:"workspace"`
 }
 
 type Memory struct {
-	ID                  int `json:"id"`
-	Tag, Content, Added string
+	ID      int    `json:"id"`
+	Tag     string `json:"tag"`
+	Content string `json:"content"`
+	Added   string `json:"added"`
 }
-type ProjectInfo struct {
-	Type, TestCommand string
-	FilesCount        int
-	Rules             string
-	IsGit             bool
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
-type Snapshot struct{ ID, Timestamp, FilePath, BackupPath string }
-type Message struct{ Role, Content string }
+
 type ChatRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream"`
 }
+
 type ChatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
@@ -83,197 +104,223 @@ type ChatStreamChunk struct {
 		} `json:"delta"`
 	} `json:"choices"`
 }
+
 type ToolCall struct {
 	Name string
 	Args map[string]string
 }
-type DNSResolver struct{ Name, Address string }
 
+type DNSResolver struct {
+	Name    string
+	Address string
+}
+
+// ---------- Global State ----------
 var (
-	config                                        Config
-	memories                                      []Memory
-	snapshots                                     []Snapshot
-	sessionMessages                               []Message
-	currentMode                                   = "cli"
-	workspace, homeDir, nootyDir, projectNootyDir string
-	memFile, configFile, snapshotDir, snapshotLog string
-	projInfo                                      ProjectInfo
-	fallbackDNS                                   = []DNSResolver{
-		{"Direct Connection", ""}, {"Electro DNS", "78.157.42.100"},
-		{"Shecan DNS #1", "178.22.122.100"}, {"Shecan DNS #2", "185.51.200.2"},
-		{"Begzar DNS #1", "185.55.226.26"}, {"Begzar DNS #2", "185.55.225.25"},
+	config          Config
+	memories        []Memory
+	projectMemories []Memory
+	sessionMessages []Message
+	currentMode     = "chat" // "chat" or "cli"
+	workspace       string
+	homeDir         string
+	nootyDir        string
+	memFile         string
+	projMemFile     string
+	configFile      string
+	snapshotDir     string
+	lastSnapshot    string
+
+	fallbackDNS = []DNSResolver{
+		{Name: "Direct Connection", Address: ""},
+		{Name: "Electro DNS", Address: "78.157.42.100"},
+		{Name: "Shecan DNS #1", Address: "178.22.122.100"},
+		{Name: "Shecan DNS #2", Address: "185.51.200.2"},
+		{Name: "Begzar DNS #1", Address: "185.55.226.26"},
+		{Name: "Begzar DNS #2", Address: "185.55.225.25"},
 	}
 	activeDNSName = "Direct Connection"
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "NootyCLI v0.3.0 — Autonomous Code Agent Core")
-		fmt.Fprintln(os.Stderr, "Usage: nooty [options] [task|subcommand]")
-		fmt.Fprintln(os.Stderr, "Commands: nooty \"task\", init, review, test, explain <file>, ask <question>, doctor")
+		fmt.Fprintf(os.Stderr, "NootyCLI v0.3.0 — Agent Core\n\nUsage:\n  nooty [options] [command] [arguments]\n\nOptions:\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nCommands (when not in interactive mode):\n  ask <question>\n  agent <task>\n  review\n  test\n  init\n  doctor\n")
 	}
 	flag.Parse()
+
+	// Command-line mode?
+	args := flag.Args()
+	if len(args) > 0 {
+		initGlobalState()
+		handleCommandLine(args)
+		return
+	}
+
+	initGlobalState()
+	drawHeader()
+	repl()
+}
+
+func initGlobalState() {
 	var err error
 	homeDir, err = os.UserHomeDir()
 	if err != nil {
-		fatal("Cannot locate user home directory")
+		fmt.Fprintln(os.Stderr, "⚠ Error: Cannot locate user home directory.")
+		os.Exit(1)
 	}
+
 	nootyDir = filepath.Join(homeDir, ".nooty")
+	_ = os.MkdirAll(nootyDir, 0700)
 	_ = os.MkdirAll(filepath.Join(nootyDir, "chats"), 0700)
 	configFile = filepath.Join(nootyDir, "config.json")
 	memFile = filepath.Join(nootyDir, "memories.json")
 	loadConfig()
 	loadMemories()
+
 	if config.Workspace == "" {
-		config.Workspace, _ = os.Getwd()
-		if config.Workspace == "" {
+		cwd, err := os.Getwd()
+		if err == nil {
+			config.Workspace = cwd
+		} else {
 			config.Workspace = homeDir
 		}
 	}
 	workspace = config.Workspace
-	refreshWorkspaceState()
+	snapshotDir = filepath.Join(workspace, ".nooty", "snapshots")
+	projMemFile = filepath.Join(workspace, ".nooty", "project_memory.json")
+	loadProjectMemories()
+}
 
-	args := flag.Args()
-	if len(args) > 0 {
-		switch args[0] {
-		case "init":
-			runInit()
-		case "doctor":
-			runDoctor()
-		case "review":
-			runReview()
-		case "test":
-			runAutoTests()
-		case "explain":
-			target := "."
-			if len(args) > 1 {
-				target = args[1]
-			}
-			runExplain(target)
-		case "ask":
-			if len(args) > 1 {
-				currentMode = "chat"
-				handleChat(strings.Join(args[1:], " "))
-			} else {
-				fmt.Println("Usage: nooty ask <question>")
-			}
-		default:
-			currentMode = "cli"
-			drawHeader()
-			task := strings.Join(args, " ")
-			fmt.Printf("%s🎯 Direct Task:%s %s\n\n", c(bold)+c(yellow), c(reset), task)
-			handleChat(task)
+func handleCommandLine(args []string) {
+	switch args[0] {
+	case "ask":
+		if len(args) < 2 {
+			fmt.Println("Usage: nooty ask <question>")
+			return
 		}
-		return
+		query := strings.Join(args[1:], " ")
+		messages := buildMessages(query)
+		streamResponse(messages)
+	case "agent":
+		if len(args) < 2 {
+			fmt.Println("Usage: nooty agent <task>")
+			return
+		}
+		query := strings.Join(args[1:], " ")
+		messages := buildMessages(query)
+		runAgentLoop(messages)
+	case "review":
+		runReview()
+	case "test":
+		runTest()
+	case "init":
+		initializeProject()
+	case "doctor":
+		runDoctor()
+	default:
+		fmt.Printf("Unknown command: %s\n", args[0])
+		flag.Usage()
 	}
-	drawHeader()
-	repl()
 }
 
-func fatal(msg string) { fmt.Fprintln(os.Stderr, "⚠ "+msg); os.Exit(1) }
-
-func refreshWorkspaceState() {
-	projectNootyDir = filepath.Join(workspace, ".nooty")
-	snapshotDir = filepath.Join(projectNootyDir, "snapshots")
-	snapshotLog = filepath.Join(projectNootyDir, "snapshots.json")
-	_ = os.MkdirAll(snapshotDir, 0700)
-	loadSnapshots()
-	projInfo = detectProject(workspace)
-}
-
+// ---------- Minimal Sleek Header ----------
 func drawHeader() {
-	width := 66
+	width := 70
 	line := strings.Repeat("─", width-2)
+
 	fmt.Println(c(cyan) + "┌" + line + "┐" + c(reset))
 	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(bold)+c(yellow), centerText(" NOOTY CLI ", width-2), c(cyan), c(reset))
-	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.3.0 Radin Agent Core — Code Agent Intelligence", width-2), c(cyan), c(reset))
+	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.3.0 Radin Agent Core — Agentic Terminal Intelligence", width-2), c(cyan), c(reset))
 	fmt.Println(c(cyan) + "├" + line + "┤" + c(reset))
-	git := "Not a Git Repo"
-	if projInfo.IsGit {
-		git = "Git Enabled"
+
+	prettyWorkspace := formatPath(workspace)
+
+	entries := [][]string{
+		{"Provider", truncateString(config.ProviderEndpoint, 40)},
+		{"Model", config.Model},
+		{"API Key", maskAPIKey(config.APIKey)},
+		{"Workspace", truncateString(prettyWorkspace, 40)},
+		{"DNS Shield", activeDNSName},
+		{"Mode", strings.ToUpper(currentMode) + " Mode"},
+		{"Safety", config.Safety},
 	}
-	entries := [][]string{{"Provider", truncateString(config.ProviderEndpoint, 38)}, {"Model", config.Model}, {"Project", fmt.Sprintf("%s (%s)", projInfo.Type, git)}, {"Workspace", truncateString(formatPath(workspace), 38)}, {"DNS Shield", activeDNSName}, {"Mode / Safety", fmt.Sprintf("%s (%s)", strings.ToUpper(currentMode), config.Safety)}}
+
+	// Project detection
+	projInfo := detectProjectInfo(workspace)
+	if projInfo != "" {
+		entries = append(entries, []string{"Project", projInfo})
+	}
+
 	for _, e := range entries {
-		fmt.Printf("%s│%s %-12s: %s%-38s %s│%s\n", c(cyan), c(bold)+c(white), e[0], c(green), e[1], c(cyan), c(reset))
+		val := fmt.Sprintf("%-40s", e[1])
+		fmt.Printf("%s│%s %-12s: %s%s %s│%s\n",
+			c(cyan), c(bold)+c(white), e[0], c(green), val, c(cyan), c(reset))
 	}
 	fmt.Println(c(cyan) + "└" + line + "┘" + c(reset))
-	if projInfo.Rules != "" {
-		fmt.Printf("%s📌 Project rules loaded from .nooty/rules.md%s\n", c(yellow), c(reset))
-	}
-	fmt.Printf("%s💡 /help  /undo  /changes  /review  /test  /context%s\n\n", c(dim), c(reset))
+	fmt.Printf("%s💡 Type %s/help%s for options, %s/mode cli%s for Agent Mode.%s\n\n", c(dim), c(bold)+c(green), c(dim), c(bold)+c(cyan), c(dim), c(reset))
 }
 
-func formatPath(p string) string {
-	if strings.HasPrefix(p, homeDir) {
-		return "~" + strings.TrimPrefix(p, homeDir)
+func formatPath(path string) string {
+	if strings.HasPrefix(path, homeDir) {
+		return "~" + strings.TrimPrefix(path, homeDir)
 	}
-	return p
+	return path
 }
-func centerText(s string, w int) string {
-	if len(s) >= w {
-		return s[:w]
+
+func centerText(text string, width int) string {
+	if len(text) >= width {
+		return text[:width]
 	}
-	l := (w - len(s)) / 2
-	return strings.Repeat(" ", l) + s + strings.Repeat(" ", w-l-len(s))
+	left := (width - len(text)) / 2
+	right := width - len(text) - left
+	return strings.Repeat(" ", left) + text + strings.Repeat(" ", right)
 }
-func truncateString(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if len(s) <= n {
+
+func truncateString(s string, max int) string {
+	if len(s) <= max {
 		return s
 	}
-	if n <= 3 {
-		return s[:n]
-	}
-	return "..." + s[len(s)-n+3:]
+	return "..." + s[len(s)-max+3:]
 }
-func maskAPIKey(k string) string {
-	if k == "" {
+
+func maskAPIKey(key string) string {
+	if key == "" {
 		return "(not configured)"
 	}
-	if len(k) <= 8 {
-		return k[:1] + strings.Repeat("*", len(k)-1)
+	if len(key) <= 8 {
+		return key[:1] + strings.Repeat("*", len(key)-1)
 	}
-	return k[:4] + strings.Repeat("*", len(k)-8) + k[len(k)-4:]
-}
-func exists(p string) bool { _, e := os.Stat(p); return e == nil }
-
-func detectProject(dir string) ProjectInfo {
-	p := ProjectInfo{Type: "Generic Codebase"}
-	if exists(filepath.Join(dir, ".git")) {
-		p.IsGit = true
-	}
-	if entries, e := os.ReadDir(dir); e == nil {
-		p.FilesCount = len(entries)
-	}
-	switch {
-	case exists(filepath.Join(dir, "go.mod")):
-		p.Type = "Go Modules"
-		p.TestCommand = "go test ./..."
-	case exists(filepath.Join(dir, "package.json")):
-		p.Type = "Node.js"
-		p.TestCommand = "npm test"
-	case exists(filepath.Join(dir, "pyproject.toml")) || exists(filepath.Join(dir, "requirements.txt")):
-		p.Type = "Python"
-		p.TestCommand = "pytest"
-	case exists(filepath.Join(dir, "Cargo.toml")):
-		p.Type = "Rust Cargo"
-		p.TestCommand = "cargo test"
-	case exists(filepath.Join(dir, "composer.json")):
-		p.Type = "PHP Composer"
-		p.TestCommand = "vendor/bin/phpunit"
-	case exists(filepath.Join(dir, "pom.xml")) || exists(filepath.Join(dir, "build.gradle")):
-		p.Type = "Java Project"
-		p.TestCommand = "mvn test"
-	}
-	if b, e := os.ReadFile(filepath.Join(dir, ".nooty", "rules.md")); e == nil {
-		p.Rules = strings.TrimSpace(string(b))
-	}
-	return p
+	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
 }
 
+// ---------- Project Detection ----------
+func detectProjectInfo(path string) string {
+	checks := []struct {
+		file string
+		desc string
+	}{
+		{"go.mod", "Go"},
+		{"package.json", "Node.js"},
+		{"pyproject.toml", "Python"},
+		{"requirements.txt", "Python"},
+		{"Cargo.toml", "Rust"},
+		{"composer.json", "PHP"},
+		{"pom.xml", "Java/Maven"},
+		{"build.gradle", "Java/Gradle"},
+		{"CMakeLists.txt", "C/C++"},
+		{"Dockerfile", "Docker"},
+	}
+	for _, c := range checks {
+		if _, err := os.Stat(filepath.Join(path, c.file)); err == nil {
+			return c.desc
+		}
+	}
+	return ""
+}
+
+// ---------- Interactive REPL Engine ----------
 func repl() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -285,6 +332,7 @@ func repl() {
 		if line == "" {
 			continue
 		}
+
 		if strings.HasPrefix(line, "/") {
 			handleSlashCommand(line)
 		} else if strings.HasPrefix(line, "!") && currentMode == "cli" {
@@ -293,8 +341,9 @@ func repl() {
 			handleChat(line)
 		}
 	}
-	fmt.Println(c(dim) + "\n👋 NootyCLI session ended." + c(reset))
+	fmt.Println(c(dim) + "\n👋 NootyCLI session ended. Goodbye!" + c(reset))
 }
+
 func prompt() string {
 	if currentMode == "cli" {
 		return c(bold) + c(cyan) + "🤖 nooty[agent]" + c(yellow) + " ❯ " + c(reset)
@@ -302,332 +351,433 @@ func prompt() string {
 	return c(bold) + c(green) + "⚡ nooty" + c(white) + " ❯ " + c(reset)
 }
 
+// ---------- Command Dispatcher ----------
 func handleSlashCommand(cmd string) {
-	p := strings.Fields(cmd)
-	if len(p) == 0 {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
 		return
 	}
-	switch p[0] {
+
+	switch parts[0] {
 	case "/help":
 		printHelp()
 	case "/mode":
-		if len(p) > 1 && p[1] == "cli" {
+		if len(parts) > 1 && parts[1] == "cli" {
 			currentMode = "cli"
+			fmt.Println(c(green) + "🛠 Switched to Agent Mode (Tool Execution Enabled)." + c(reset))
 		} else {
 			currentMode = "chat"
+			fmt.Println(c(green) + "💬 Switched to Conversational Chat Mode." + c(reset))
 		}
-		fmt.Println("✅ Mode: " + currentMode)
 	case "/workspace":
-		handleWorkspace(p[1:])
+		handleWorkspace(parts[1:])
 	case "/model":
-		handleModelCommand(p[1:])
+		handleModelCommand(parts[1:])
 	case "/config":
 		handleConfig()
 	case "/dns":
 		showDNSStatus()
 	case "/doctor":
 		runDoctor()
-	case "/undo", "/revert":
-		undoLastSnapshot()
-	case "/changes":
-		listSnapshots()
-	case "/init":
-		runInit()
-	case "/review":
-		runReview()
-	case "/test":
-		runAutoTests()
-	case "/context":
-		showContextBudget()
 	case "/memory":
-		handleMemory(p[1:])
+		handleMemory(parts[1:])
 	case "/safety":
-		handleSafety(p[1:])
+		handleSafety(parts[1:])
 	case "/history":
 		showHistory()
-	case "/git":
-		handleGitCommand(p[1:])
-	case "/commit":
-		runAutoCommit()
 	case "/clear":
 		sessionMessages = nil
-		clearScreen()
+		if runtime.GOOS == "windows" {
+			cmd := exec.Command("cmd", "/c", "cls")
+			cmd.Stdout = os.Stdout
+			_ = cmd.Run()
+		} else {
+			fmt.Print("\033[H\033[2J")
+		}
 		drawHeader()
+		fmt.Println(c(green) + "✨ Session history & screen cleared." + c(reset))
+	case "/init":
+		initializeProject()
+	case "/undo":
+		undoLastSnapshot()
+	case "/test":
+		runTest()
+	case "/review":
+		runReview()
+	case "/session":
+		handleSession(parts[1:])
 	case "/exit":
 		os.Exit(0)
 	default:
-		fmt.Printf("❌ Unknown command: %s. Type /help.\n", p[0])
+		fmt.Printf("❌ Unknown command: %s. Type /help for assistance.\n", parts[0])
 	}
 }
 
 func printHelp() {
-	fmt.Println(c(bold) + "\n📌 NootyCLI v0.3 Command Reference:" + c(reset))
+	fmt.Println(c(bold) + "\n📌 NootyCLI Command Reference:" + c(reset))
 	fmt.Println(`
-  /help
-  /mode [chat|cli]
-  /init
-  /undo | /revert
-  /changes
-  /review
-  /test
-  /context
-  /commit
-  /git <status|diff|log|branch>
-  /config
-  /workspace show|set <path>
-  /model show|set <name>|list
-  /dns
-  /doctor
-  /memory list|add|forget
-  /safety strict|balanced|auto
-  /history
-  /clear
-  /exit
+  /help                        Show command help overview
+  /mode [chat|cli]             Toggle Chat or Agentic CLI Execution Mode
+  /config                      Interactive wizard to setup API key, endpoint & model
+  /workspace show|set <path>   Manage current working directory
+  /model show|set <name>|list  View, switch, or browse models interactively
+  /dns                         Display Anti-Sanction Smart DNS Shield status
+  /doctor                      Run full connection and API health check
+  /memory list|add|forget      Manage long-term persistent agent context
+  /safety strict|balanced|auto Set command safety confirmation policies
+  /history                     Display conversation session log
+  /clear                       Reset current screen & session memory
+  /init                        Initialize .nooty project workspace (rules, snapshots)
+  /undo                        Restore most recent file snapshot
+  /test                        Run project tests (auto‑detect)
+  /review                      AI code review of git diff
+  /session new|save|load|list  Manage conversation sessions
+  /exit                        Terminate NootyCLI session
 
-  In Agent Mode: !<shell-command>`)
-}
-func clearScreen() {
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command("cmd", "/c", "cls")
-		cmd.Stdout = os.Stdout
-		_ = cmd.Run()
-	} else {
-		fmt.Print("\033[H\033[2J")
-	}
+  💡 In Agent CLI Mode: Prefix commands with ! for direct shell execution.`)
 }
 
 func handleConfig() {
-	r := bufio.NewReader(os.Stdin)
-	fmt.Println("\n⚙️ Nooty Configuration")
+	fmt.Println(c(bold) + "\n⚙️ Nooty Configuration Wizard" + c(reset))
+	fmt.Println("Press Enter to keep existing settings.\n")
+	reader := bufio.NewReader(os.Stdin)
+
 	fmt.Printf("Provider endpoint [%s]: ", config.ProviderEndpoint)
-	if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-		config.ProviderEndpoint = strings.TrimSpace(v)
+	ep, _ := reader.ReadString('\n')
+	ep = strings.TrimSpace(ep)
+	if ep != "" {
+		config.ProviderEndpoint = ep
 	}
+
 	fmt.Printf("API key [%s]: ", maskAPIKey(config.APIKey))
-	if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-		config.APIKey = strings.TrimSpace(v)
+	key, _ := reader.ReadString('\n')
+	key = strings.TrimSpace(key)
+	if key != "" {
+		config.APIKey = key
 	}
+
 	fmt.Printf("Model [%s]: ", config.Model)
-	if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-		config.Model = strings.TrimSpace(v)
+	mod, _ := reader.ReadString('\n')
+	mod = strings.TrimSpace(mod)
+	if mod != "" {
+		config.Model = mod
 	}
+
 	saveConfig()
-	fmt.Println("✅ Configuration saved.")
+	fmt.Println(c(green) + "✅ Configuration saved successfully!\n" + c(reset))
+}
+
+func showDNSStatus() {
+	fmt.Println(c(bold) + "\n🛡️ Anti-Sanction Smart DNS Fallback Chain:" + c(reset))
+	for i, dns := range fallbackDNS {
+		status := ""
+		if dns.Name == activeDNSName {
+			status = c(green) + " [ACTIVE]" + c(reset)
+		}
+		if dns.Address == "" {
+			fmt.Printf("  %d. %-24s (System Default)%s\n", i+1, dns.Name, status)
+		} else {
+			fmt.Printf("  %d. %-24s (%s)%s\n", i+1, dns.Name, dns.Address, status)
+		}
+	}
+	fmt.Println()
 }
 
 func handleModelCommand(args []string) {
-	if len(args) == 0 || args[0] == "show" {
+	if len(args) == 0 {
 		fmt.Printf("🤖 Active Model: %s\n", config.Model)
 		return
 	}
 	switch args[0] {
+	case "show":
+		fmt.Printf("🤖 Active Model: %s\n", config.Model)
 	case "set":
 		if len(args) < 2 {
-			fmt.Println("Usage: /model set <name>")
+			fmt.Println("Usage: /model set <model-name>")
 			return
 		}
 		config.Model = args[1]
 		saveConfig()
-		fmt.Println("✅ Model: " + config.Model)
+		fmt.Printf("✅ Model set to: %s\n", config.Model)
 	case "list":
 		selectModelInteractive()
 	default:
-		fmt.Println("Usage: /model show|set|list")
+		fmt.Println("❌ Unknown subcommand. Use: show | set | list")
 	}
 }
+
 func selectModelInteractive() {
-	fmt.Println("🔍 Fetching models...")
-	models, e := fetchAvailableModels()
-	if e != nil {
-		fmt.Println("❌", e)
+	fmt.Println("🔍 Fetching available models...")
+	models, err := fetchAvailableModels()
+	if err != nil {
+		fmt.Printf("%s❌ Model list error: %v%s\n", c(red), err, c(reset))
 		return
 	}
-	sort.Strings(models)
-	for i, m := range models {
-		fmt.Printf("[%d] %s\n", i+1, m)
-	}
-	fmt.Print("Select number (q=quit): ")
-	r := bufio.NewReader(os.Stdin)
-	v, _ := r.ReadString('\n')
-	v = strings.TrimSpace(v)
-	if v == "q" {
+	if len(models) == 0 {
+		fmt.Println("⚠️ Provider returned zero models.")
 		return
 	}
-	n, e := strconv.Atoi(v)
-	if e != nil || n < 1 || n > len(models) {
-		fmt.Println("❌ Invalid selection")
-		return
+
+	pageSize := 15
+	totalPages := (len(models) + pageSize - 1) / pageSize
+	page := 0
+
+	for {
+		fmt.Printf("\n%s📋 Available Provider Models (Page %d/%d):%s\n", c(bold), page+1, totalPages)
+		start := page * pageSize
+		end := start + pageSize
+		if end > len(models) {
+			end = len(models)
+		}
+
+		for i, m := range models[start:end] {
+			fmt.Printf("  %s[%2d]%s %s\n", c(bold)+c(cyan), start+i+1, c(reset), m)
+		}
+
+		fmt.Print("\nSelect number, [n]ext, [p]rev, or [q]uit: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+
+		switch input {
+		case "q":
+			return
+		case "n":
+			if page < totalPages-1 {
+				page++
+			}
+		case "p":
+			if page > 0 {
+				page--
+			}
+		default:
+			num, err := strconv.Atoi(input)
+			if err != nil || num < 1 || num > len(models) {
+				fmt.Println("❌ Invalid selection.")
+				continue
+			}
+			selected := models[num-1]
+			config.Model = selected
+			saveConfig()
+			fmt.Printf("%s✅ Active Model updated to: %s%s\n", c(green), selected, c(reset))
+			return
+		}
 	}
-	config.Model = models[n-1]
-	saveConfig()
-	fmt.Println("✅ Model set to:", config.Model)
 }
 
-func showDNSStatus() {
-	fmt.Println(c(bold) + "\n🛡️ DNS Fallback Chain:" + c(reset))
-	for i, d := range fallbackDNS {
-		a := "System Default"
-		if d.Address != "" {
-			a = d.Address
-		}
-		mark := ""
-		if d.Name == activeDNSName {
-			mark = " [ACTIVE]"
-		}
-		fmt.Printf("%d. %-24s %s%s\n", i+1, d.Name, a, mark)
-	}
-}
-
-func dnsDialer(server string) func(context.Context, string, string) (net.Conn, error) {
+// ---------- Network Transport Engine ----------
+func dnsDialer(dnsServer string) func(ctx context.Context, network, address string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		d := net.Dialer{}
-		return d.DialContext(ctx, network, server+":53")
+		return d.DialContext(ctx, network, dnsServer+":53")
 	}
 }
+
 func httpClientForDNS(dns string) *http.Client {
 	if dns == "" {
-		return &http.Client{Timeout: 40 * time.Second}
+		return &http.Client{Timeout: 35 * time.Second}
 	}
-	resolver := &net.Resolver{PreferGo: true, Dial: dnsDialer(dns)}
-	d := &net.Dialer{Resolver: resolver}
-	return &http.Client{Transport: &http.Transport{DialContext: d.DialContext}, Timeout: 40 * time.Second}
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial:     dnsDialer(dns),
+	}
+	dialer := &net.Dialer{Resolver: resolver}
+	return &http.Client{
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+		Timeout:   35 * time.Second,
+	}
 }
+
 func doWithFallback(method, url string, body []byte, headers map[string]string) (*http.Response, error) {
-	var lastErr error
-	for i, d := range fallbackDNS {
-		client := httpClientForDNS(d.Address)
+	for i, dnsResolver := range fallbackDNS {
+		client := httpClientForDNS(dnsResolver.Address)
 		var req *http.Request
-		var e error
+		var err error
+
 		if body != nil {
-			req, e = http.NewRequest(method, url, bytes.NewReader(body))
+			req, err = http.NewRequest(method, url, bytes.NewBuffer(body))
 		} else {
-			req, e = http.NewRequest(method, url, nil)
+			req, err = http.NewRequest(method, url, nil)
 		}
-		if e != nil {
-			return nil, e
+		if err != nil {
+			return nil, err
 		}
+
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		resp, e := client.Do(req)
-		if e == nil && resp.StatusCode != 403 && resp.StatusCode != 451 {
-			activeDNSName = d.Name
+
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode != 403 && resp.StatusCode != 451 {
+			activeDNSName = dnsResolver.Name
 			return resp, nil
+		}
+
+		if i < len(fallbackDNS)-1 {
+			fmt.Printf("%s⚠️ Direct connection/DNS blocked (%s). Bypassing via %s...%s\n",
+				c(yellow), dnsResolver.Name, fallbackDNS[i+1].Name, c(reset))
 		}
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
-		if e != nil {
-			lastErr = e
-		}
-		if i < len(fallbackDNS)-1 {
-			fmt.Printf("%s⚠️ Network failed via %s → trying %s%s\n", c(yellow), d.Name, fallbackDNS[i+1].Name, c(reset))
-		}
 	}
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("all DNS resolvers exhausted")
+	return nil, fmt.Errorf("network connection failed: all anti-sanction resolvers exhausted")
 }
 
 func fetchAvailableModels() ([]string, error) {
 	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/models"
-	h := map[string]string{}
+	headers := map[string]string{}
 	if config.APIKey != "" {
-		h["Authorization"] = "Bearer " + config.APIKey
+		headers["Authorization"] = "Bearer " + config.APIKey
 	}
-	resp, e := doWithFallback("GET", endpoint, nil, h)
-	if e != nil {
-		return nil, e
+
+	resp, err := doWithFallback("GET", endpoint, nil, headers)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
-	var r struct {
+
+	var result struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if e = json.Unmarshal(b, &r); e != nil {
-		return nil, e
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse models payload")
 	}
-	out := make([]string, 0, len(r.Data))
-	for _, m := range r.Data {
-		out = append(out, m.ID)
+
+	var models []string
+	for _, d := range result.Data {
+		models = append(models, d.ID)
 	}
-	return out, nil
+	return models, nil
 }
 
+// ---------- Chat Execution ----------
 func handleChat(input string) {
-	m := buildMessages(input)
+	messages := buildMessages(input)
 	if currentMode == "cli" {
-		runAgentLoop(m)
-	} else {
-		streamResponse(m)
+		runAgentLoop(messages)
+		return
 	}
+	streamResponse(messages)
 }
+
 func buildMessages(userInput string) []Message {
-	sys := `You are NootyCLI v0.3, an autonomous code agent. In chat mode answer as a concise senior engineer. In CLI mode inspect, edit, test, and verify the workspace. To call exactly one tool, output one line in this exact form: TOOL: tool_name key="value". Tools: read_file, write_file, apply_patch, delete_file, list_files, search_files, search_code, find_symbol, file_info, tree, git_status, git_diff, git_log, git_branch, run_command, run_test, run_linter, project_info, env_info. apply_patch uses <<<<<<< SEARCH / ======= / >>>>>>> REPLACE blocks. Never invent a tool.`
-	if projInfo.Rules != "" {
-		sys += "\nProject Rules:\n" + projInfo.Rules
+	var msgs []Message
+	sysPrompt := `You are NootyCLI, an autonomous agentic terminal AI assistant.
+
+When in CHAT mode: Provide concise, expert terminal and software engineering responses.
+
+When in CLI mode: You act as an autonomous workspace agent.
+To execute tools, reply STRICTLY using this exact syntax:
+TOOL: tool_name key1="value1" key2="value2"
+
+Available Workspace Tools:
+- list_files (path="relative_path")
+- tree (path="relative_path")
+- read_file (path="relative_path")
+- write_file (path="relative_path", content="full_content")
+- create_file (path="relative_path", content="initial_content")
+- delete_file (path="relative_path")
+- search_code (query="text", path="relative_path")
+- file_info (path="relative_path")
+- git_status
+- git_diff
+- run_command (command="shell_cmd", timeout="seconds")
+- apply_patch (path="relative_path", patch="unified_diff")
+
+IMPORTANT: Use EXACT tool format. Issue only ONE tool call per interaction step.`
+
+	// Add project rules
+	rules := loadProjectRules()
+	if rules != "" {
+		sysPrompt += "\n\nProject Rules:\n" + rules
 	}
-	msgs := []Message{{Role: "system", Content: sys}}
-	start := 0
-	if len(sessionMessages) > 12 {
-		start = len(sessionMessages) - 12
-	}
-	msgs = append(msgs, sessionMessages[start:]...)
-	u := Message{Role: "user", Content: userInput}
-	msgs = append(msgs, u)
-	sessionMessages = append(sessionMessages, u)
-	return msgs
-}
-func getRelevantMemories(q string) []Memory {
-	q = strings.ToLower(q)
-	var out []Memory
-	for _, m := range memories {
-		if strings.Contains(strings.ToLower(m.Content), q) || strings.Contains(strings.ToLower(m.Tag), q) {
-			out = append(out, m)
+
+	// Add memories (global + project)
+	relevant := getRelevantMemories(userInput)
+	if len(relevant) > 0 {
+		sysPrompt += "\n\nUser Context & Memories:\n"
+		for _, m := range relevant {
+			sysPrompt += fmt.Sprintf("- [%s] %s\n", m.Tag, m.Content)
 		}
 	}
-	if len(out) > 5 {
-		out = out[:5]
+
+	msgs = append(msgs, Message{Role: "system", Content: sysPrompt})
+
+	histLimit := 10
+	start := 0
+	if len(sessionMessages) > histLimit {
+		start = len(sessionMessages) - histLimit
 	}
-	return out
+	msgs = append(msgs, sessionMessages[start:]...)
+
+	userMsg := Message{Role: "user", Content: userInput}
+	msgs = append(msgs, userMsg)
+	sessionMessages = append(sessionMessages, userMsg)
+
+	return msgs
 }
-func showContextBudget() {
-	n := 1800 + len(projInfo.Rules)
-	for _, m := range sessionMessages {
-		n += len(m.Content)
+
+func getRelevantMemories(query string) []Memory {
+	q := strings.ToLower(query)
+	var res []Memory
+
+	// Search global memories
+	for _, m := range memories {
+		if strings.Contains(strings.ToLower(m.Content), q) || strings.Contains(strings.ToLower(m.Tag), q) {
+			res = append(res, m)
+		}
 	}
-	fmt.Printf("\n📊 Estimated context: ~%d tokens (%d messages)\n", n/4, len(sessionMessages))
+	// Search project memories
+	for _, m := range projectMemories {
+		if strings.Contains(strings.ToLower(m.Content), q) || strings.Contains(strings.ToLower(m.Tag), q) {
+			res = append(res, m)
+		}
+	}
+
+	if len(res) > 5 {
+		res = res[:5]
+	}
+	return res
 }
 
 func streamResponse(messages []Message) {
-	payload, _ := json.Marshal(ChatRequest{Model: config.Model, Messages: messages, Stream: true})
-	h := map[string]string{"Content-Type": "application/json"}
+	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: true}
+	jsonData, _ := json.Marshal(reqPayload)
+	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
+	headers := map[string]string{"Content-Type": "application/json"}
 	if config.APIKey != "" {
-		h["Authorization"] = "Bearer " + config.APIKey
+		headers["Authorization"] = "Bearer " + config.APIKey
 	}
-	resp, e := doWithFallback("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", payload, h)
-	if e != nil {
-		fmt.Println("❌", e)
+
+	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
+	if err != nil {
+		fmt.Printf("%s❌ Request error: %v%s\n", c(red), err, c(reset))
 		return
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		fmt.Printf("❌ Provider Error %d: %s\n", resp.StatusCode, b)
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("%s❌ Provider Error %d: %s%s\n", c(red), resp.StatusCode, string(body), c(reset))
 		return
 	}
-	r := bufio.NewReader(resp.Body)
-	var full strings.Builder
+
+	reader := bufio.NewReader(resp.Body)
+	var fullContent strings.Builder
 	fmt.Print(c(cyan))
+
 	for {
-		line, e := r.ReadString('\n')
-		if e != nil {
+		line, err := reader.ReadString('\n')
+		if err != nil {
 			break
 		}
 		line = strings.TrimSpace(line)
@@ -638,462 +788,602 @@ func streamResponse(messages []Message) {
 		if data == "[DONE]" {
 			break
 		}
-		var ch ChatStreamChunk
-		if json.Unmarshal([]byte(data), &ch) == nil {
-			for _, x := range ch.Choices {
-				fmt.Print(x.Delta.Content)
-				full.WriteString(x.Delta.Content)
+
+		var chunk ChatStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			for _, choice := range chunk.Choices {
+				fmt.Print(choice.Delta.Content)
+				fullContent.WriteString(choice.Delta.Content)
 			}
 		}
 	}
+
 	fmt.Print(c(reset) + "\n\n")
-	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: full.String()})
+	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fullContent.String()})
+}
+
+// ---------- Agentic Plan & Execute Loop ----------
+func runAgentLoop(messages []Message) {
+	planPrompt := append(messages, Message{Role: "user", Content: "Provide a clear, numbered execution plan to fulfill this request."})
+	fmt.Print(c(yellow) + "🤔 Analyzing & planning action sequence... " + c(reset))
+
+	planText, err := getModelResponseText(planPrompt)
+	if err != nil {
+		fmt.Printf("%s❌ Planning failed: %v%s\n", c(red), err, c(reset))
+		return
+	}
+
+	fmt.Println("\n" + c(cyan) + c(bold) + "📋 Proposed Execution Plan:" + c(reset))
+	fmt.Println(c(cyan) + planText + c(reset) + "\n")
+
+	fmt.Print(c(bold) + "Approve plan execution? [Y/n]: " + c(reset))
+	reader := bufio.NewReader(os.Stdin)
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm == "n" || confirm == "no" {
+		fmt.Println("🛑 Execution cancelled by user.")
+		return
+	}
+
+	msgs := append(messages,
+		Message{Role: "assistant", Content: planText},
+		Message{Role: "user", Content: "Plan approved. Proceed step by step using TOOL commands."},
+	)
+
+	for i := 0; i < 15; i++ { // increased steps for agentic loop
+		respText, err := getModelResponseText(msgs)
+		if err != nil {
+			fmt.Printf("%s❌ Agent Execution Error: %v%s\n", c(red), err, c(reset))
+			return
+		}
+
+		toolCall := extractToolCall(respText)
+		if toolCall == nil {
+			fmt.Println("\n" + c(green) + respText + c(reset) + "\n")
+			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: respText})
+			return
+		}
+
+		fmt.Printf("\n%s🔧 Agent Action [%d]: %s%s\n", c(bold)+c(yellow), i+1, toolCall.Name, c(reset))
+		for k, v := range toolCall.Args {
+			fmt.Printf("   %s%s%s: %s\n", c(dim), k, c(reset), v)
+		}
+
+		toolResult, approved := executeAgentTool(toolCall)
+		if !approved {
+			msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: "Action denied by user safety policy."})
+			continue
+		}
+
+		// Summarize tool output for context
+		summary := summarizeOutput(toolResult)
+		fmt.Printf("%s📄 Tool Output:%s\n%s\n", c(dim), c(reset), summary)
+
+		msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: fmt.Sprintf("Tool '%s' output:\n%s", toolCall.Name, summary)})
+	}
+	fmt.Printf("%s⚠️ Agent loop step limit reached (15 steps).%s\n", c(yellow), c(reset))
 }
 
 func getModelResponseText(messages []Message) (string, error) {
-	payload, _ := json.Marshal(ChatRequest{Model: config.Model, Messages: messages, Stream: false})
-	h := map[string]string{"Content-Type": "application/json"}
+	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: false}
+	jsonData, _ := json.Marshal(reqPayload)
+	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
+	headers := map[string]string{"Content-Type": "application/json"}
 	if config.APIKey != "" {
-		h["Authorization"] = "Bearer " + config.APIKey
+		headers["Authorization"] = "Bearer " + config.APIKey
 	}
-	resp, e := doWithFallback("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", payload, h)
-	if e != nil {
-		return "", e
+
+	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
+	if err != nil {
+		return "", err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
-	var r struct {
+
+	var result struct {
 		Choices []struct {
-			Message Message `json:"message"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
 		} `json:"choices"`
 	}
-	if e = json.Unmarshal(b, &r); e != nil {
-		return "", e
-	}
-	if len(r.Choices) == 0 {
-		return "", fmt.Errorf("empty choices")
-	}
-	return r.Choices[0].Message.Content, nil
-}
 
-func runAgentLoop(messages []Message) {
-	planMsgs := append(append([]Message{}, messages...), Message{Role: "user", Content: "Create a concise numbered execution plan. Do not execute tools yet."})
-	fmt.Print(c(yellow) + "🤔 Planning... " + c(reset))
-	plan, e := getModelResponseText(planMsgs)
-	if e != nil {
-		fmt.Println("❌", e)
-		return
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
 	}
-	fmt.Println("\n" + c(cyan) + "📋 Plan:" + c(reset) + "\n" + plan + "\n")
-	if config.Safety != "auto" && !confirm("Approve plan? [Y/n]: ") {
-		fmt.Println("🛑 Cancelled.")
-		return
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("empty choices array in response")
 	}
-	msgs := append(append([]Message{}, messages...), Message{Role: "assistant", Content: plan}, Message{Role: "user", Content: "Plan approved. Execute step by step with one TOOL call at a time. After changes, run tests and verify."})
-	for i := 0; i < 12; i++ {
-		text, e := getModelResponseText(msgs)
-		if e != nil {
-			fmt.Println("❌", e)
-			return
-		}
-		tc := extractToolCall(text)
-		if tc == nil {
-			fmt.Println("\n" + c(green) + text + c(reset))
-			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: text})
-			return
-		}
-		fmt.Printf("\n%s🔧 Action %d: %s%s\n", c(yellow), i+1, tc.Name, c(reset))
-		res, ok := executeAgentTool(tc)
-		if !ok {
-			msgs = append(msgs, Message{Role: "user", Content: "Action denied."})
-			continue
-		}
-		if len(res) > 2500 {
-			res = summarizeToolOutput(res)
-		}
-		fmt.Println(res)
-		msgs = append(msgs, Message{Role: "assistant", Content: text}, Message{Role: "user", Content: "Tool output:\n" + res})
-	}
-	fmt.Println(c(yellow) + "⚠️ Agent step limit reached." + c(reset))
-}
-func confirm(prompt string) bool {
-	fmt.Print(prompt)
-	r := bufio.NewReader(os.Stdin)
-	v, _ := r.ReadString('\n')
-	v = strings.ToLower(strings.TrimSpace(v))
-	return v == "" || v == "y" || v == "yes"
-}
-func summarizeToolOutput(s string) string {
-	if len(s) <= 2500 {
-		return s
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) <= 40 {
-		return truncateString(s, 2400) + "\n... (output truncated)"
-	}
-	return strings.Join(lines[:25], "\n") + fmt.Sprintf("\n\n... [%d lines omitted] ...\n\n", len(lines)-40) + strings.Join(lines[len(lines)-15:], "\n")
+
+	return result.Choices[0].Message.Content, nil
 }
 
 func extractToolCall(text string) *ToolCall {
-	for _, line := range strings.Split(text, "\n") {
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "TOOL:") {
+		if strings.HasPrefix(line, "TOOL:") || strings.HasPrefix(line, "TOOL：") {
 			return parseToolLine(line)
 		}
 	}
+
+	re := regexp.MustCompile(`(?i)TOOL:\s*(\w+)\s+(.*)`)
+	matches := re.FindStringSubmatch(text)
+	if len(matches) >= 3 {
+		return parseToolArgs(matches[1], matches[2])
+	}
 	return nil
 }
+
 func parseToolLine(line string) *ToolCall {
-	line = strings.TrimSpace(strings.TrimPrefix(line, "TOOL:"))
+	line = strings.TrimPrefix(line, "TOOL:")
+	line = strings.TrimPrefix(line, "TOOL：")
+	line = strings.TrimSpace(line)
+
 	parts := strings.SplitN(line, " ", 2)
+	if len(parts) < 1 {
+		return nil
+	}
 	name := parts[0]
-	args := ""
+	argsStr := ""
 	if len(parts) > 1 {
-		args = parts[1]
+		argsStr = parts[1]
 	}
-	return parseToolArgs(name, args)
+	return parseToolArgs(name, argsStr)
 }
-func parseToolArgs(name, s string) *ToolCall {
+
+func parseToolArgs(name, argsStr string) *ToolCall {
 	args := map[string]string{}
-	re := regexp.MustCompile(`(\w+)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)`)
-	for _, m := range re.FindAllStringSubmatch(s, -1) {
-		v := m[2]
-		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
-			v = v[1 : len(v)-1]
+	re := regexp.MustCompile(`(\w+)=("(?:[^"\\\]|\\.)*"|'(?:[^'\\\]|\\.)*'|\S+)`)
+	matches := re.FindAllStringSubmatch(argsStr, -1)
+
+	for _, match := range matches {
+		if len(match) == 3 {
+			key := match[1]
+			val := match[2]
+			if (strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`)) || (strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
+				val = val[1 : len(val)-1]
+			}
+			val = strings.ReplaceAll(val, "\\n", "\n")
+			val = strings.ReplaceAll(val, "\\t", "\t")
+			args[key] = val
 		}
-		v = strings.ReplaceAll(v, "\\n", "\n")
-		v = strings.ReplaceAll(v, "\\t", "\t")
-		args[m[1]] = v
 	}
+
+	if len(args) == 0 && strings.TrimSpace(argsStr) != "" {
+		args["path"] = strings.TrimSpace(argsStr)
+	}
+
 	return &ToolCall{Name: name, Args: args}
 }
 
 func executeAgentTool(tc *ToolCall) (string, bool) {
-	needs := false
+	// Permission handling based on safety mode
+	needsApproval := false
+	toolName := tc.Name
+
+	// Define tool categories
+	readTools := map[string]bool{"list_files": true, "tree": true, "read_file": true, "search_code": true, "file_info": true, "git_status": true, "git_diff": true}
+	writeTools := map[string]bool{"write_file": true, "create_file": true, "apply_patch": true}
+	destructiveTools := map[string]bool{"delete_file": true, "run_command": true}
+
 	switch config.Safety {
-	case "strict":
-		switch tc.Name {
-		case "write_file", "apply_patch", "delete_file", "run_command", "run_test", "run_linter":
-			needs = true
-		}
+	case "auto":
+		needsApproval = false
 	case "balanced":
-		switch tc.Name {
-		case "delete_file", "run_command", "run_test", "run_linter":
-			needs = true
+		if writeTools[toolName] || destructiveTools[toolName] {
+			needsApproval = true
+		}
+	case "strict":
+		if !readTools[toolName] {
+			needsApproval = true
+		}
+	default:
+		needsApproval = true
+	}
+
+	if needsApproval {
+		if destructiveTools[toolName] {
+			fmt.Printf("%s⚠️ SAFETY WARNING: %s can be destructive!%s\n", c(red), toolName, c(reset))
+			fmt.Print("Type CONFIRM to proceed: ")
+			reader := bufio.NewReader(os.Stdin)
+			confirm, _ := reader.ReadString('\n')
+			if strings.TrimSpace(confirm) != "CONFIRM" {
+				return "Operation aborted by safety check.", false
+			}
+		} else {
+			fmt.Print("Confirm execution? [Y/n]: ")
+			reader := bufio.NewReader(os.Stdin)
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(strings.ToLower(confirm))
+			if confirm == "n" || confirm == "no" {
+				return "Operation cancelled by user.", false
+			}
 		}
 	}
-	if tc.Name == "delete_file" && needs {
-		fmt.Print("Type DELETE to confirm: ")
-		r := bufio.NewReader(os.Stdin)
-		v, _ := r.ReadString('\n')
-		if strings.TrimSpace(v) != "DELETE" {
-			return "Delete cancelled.", false
-		}
-	} else if needs && !confirm("Confirm tool execution? [Y/n]: ") {
-		return "Operation cancelled.", false
+
+	result, err := runTool(tc.Name, tc.Args)
+	if err != nil {
+		return fmt.Sprintf("Tool Error: %v", err), true
 	}
-	if tc.Name == "run_command" && isDangerousCommand(tc.Args["command"]) {
-		fmt.Println(c(red) + "⚠️ Dangerous command detected; explicit confirmation required." + c(reset))
-		if !confirm("Continue? [Y/n]: ") {
-			return "Blocked by safety policy.", false
-		}
-	}
-	res, e := runTool(tc.Name, tc.Args)
-	if e != nil {
-		return "Tool Error: " + e.Error(), true
-	}
-	return res, true
-}
-func isDangerousCommand(cmd string) bool {
-	for _, p := range []string{`rm\s+-rf\s+/`, `rm\s+-rf\s+\*`, `mkfs`, `dd\s+if=`, `>\s*/dev/`, `chmod\s+-R\s+777`, `shutdown`, `reboot`, `drop\s+database`} {
-		if ok, _ := regexp.MatchString(`(?i)`+p, cmd); ok {
-			return true
-		}
-	}
-	return false
+	return result, true
 }
 
+func summarizeOutput(output string) string {
+	const maxLen = 5000
+	if len(output) <= maxLen {
+		return output
+	}
+	// Simple summarization: first 2000 + last 2000
+	head := output[:2000]
+	tail := output[len(output)-2000:]
+	return fmt.Sprintf("(truncated from %d chars)\n%s\n...\n%s", len(output), head, tail)
+}
+
+// ---------- Snapshot & Undo ----------
+func createSnapshot(path string) error {
+	// Ensure snapshot dir exists
+	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+		return err
+	}
+	timestamp := time.Now().Format("2006-01-02-150405")
+	dest := filepath.Join(snapshotDir, timestamp+"_"+filepath.Base(path))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return err
+	}
+	lastSnapshot = dest
+	return nil
+}
+
+func undoLastSnapshot() {
+	if lastSnapshot == "" {
+		fmt.Println("No snapshot available to restore.")
+		return
+	}
+	// Find original path from snapshot name
+	base := filepath.Base(lastSnapshot)
+	// Format: timestamp_originalfilename
+	parts := strings.SplitN(base, "_", 2)
+	if len(parts) < 2 {
+		fmt.Println("Invalid snapshot filename.")
+		return
+	}
+	originalName := parts[1]
+	originalPath := filepath.Join(workspace, originalName) // assume root of workspace? better to find actual path
+	// For simplicity, we assume snapshot is of file in workspace root; we can improve later
+	if _, err := os.Stat(originalPath); os.IsNotExist(err) {
+		// Try to find by walking workspace
+		_ = filepath.Walk(workspace, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && filepath.Base(p) == originalName {
+				originalPath = p
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	data, err := os.ReadFile(lastSnapshot)
+	if err != nil {
+		fmt.Printf("Error reading snapshot: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(originalPath, data, 0644); err != nil {
+		fmt.Printf("Error restoring snapshot: %v\n", err)
+		return
+	}
+	fmt.Printf("✅ Restored %s from snapshot %s\n", originalPath, filepath.Base(lastSnapshot))
+	lastSnapshot = ""
+}
+
+// ---------- Tool Implementations ----------
 func runTool(name string, args map[string]string) (string, error) {
 	switch name {
-	case "read_file":
-		b, e := os.ReadFile(safeJoin(workspace, args["path"]))
-		return string(b), e
-	case "write_file":
-		p := args["path"]
-		full := safeJoin(workspace, p)
-		old := ""
-		if b, e := os.ReadFile(full); e == nil {
-			old = string(b)
-		}
-		if e := createSnapshot(p); e != nil {
-			return "", e
-		}
-		if e := os.MkdirAll(filepath.Dir(full), 0755); e != nil {
-			return "", e
-		}
-		if e := atomicWrite(full, []byte(args["content"]), 0644); e != nil {
-			return "", e
-		}
-		return "✅ File written:\n" + produceDiff(p, old, args["content"]), nil
-	case "apply_patch":
-		p := args["path"]
-		full := safeJoin(workspace, p)
-		b, e := os.ReadFile(full)
-		if e != nil {
-			return "", e
-		}
-		old := string(b)
-		nw, e := applyPatchContent(old, args["patch"])
-		if e != nil {
-			return "", e
-		}
-		if e = createSnapshot(p); e != nil {
-			return "", e
-		}
-		if e = atomicWrite(full, []byte(nw), 0644); e != nil {
-			return "", e
-		}
-		return "✅ Patch applied:\n" + produceDiff(p, old, nw), nil
-	case "delete_file":
-		p := args["path"]
-		full := safeJoin(workspace, p)
-		if e := createSnapshot(p); e != nil {
-			return "", e
-		}
-		return "✅ Removed: " + p, os.Remove(full)
 	case "list_files":
-		p := workspace
-		if args["path"] != "" {
-			p = safeJoin(workspace, args["path"])
+		path := workspace
+		if p, ok := args["path"]; ok && p != "" && p != "." {
+			path = safeJoin(workspace, p)
 		}
-		ents, e := os.ReadDir(p)
-		if e != nil {
-			return "", e
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return "", err
 		}
-		names := []string{}
-		for _, x := range ents {
-			if strings.HasPrefix(x.Name(), ".") {
-				continue
-			}
-			if x.IsDir() {
-				names = append(names, x.Name()+"/")
+		var names []string
+		for _, e := range entries {
+			if e.IsDir() {
+				names = append(names, e.Name()+"/")
 			} else {
-				names = append(names, x.Name())
+				names = append(names, e.Name())
 			}
 		}
-		sort.Strings(names)
 		if len(names) == 0 {
 			return "(directory empty)", nil
 		}
 		return strings.Join(names, "\n"), nil
-	case "search_files":
-		return searchFiles(args["pattern"]), nil
-	case "search_code":
-		return searchCode(args["query"], args["path"]), nil
-	case "find_symbol":
-		return findSymbol(args["name"]), nil
-	case "file_info":
-		i, e := os.Stat(safeJoin(workspace, args["path"]))
-		if e != nil {
-			return "", e
-		}
-		return fmt.Sprintf("Path: %s\nSize: %d\nMode: %s\nModified: %s", safeJoin(workspace, args["path"]), i.Size(), i.Mode(), i.ModTime().Format(time.RFC3339)), nil
+
 	case "tree":
-		p := workspace
-		if args["path"] != "" {
-			p = safeJoin(workspace, args["path"])
+		path := workspace
+		if p, ok := args["path"]; ok && p != "" && p != "." {
+			path = safeJoin(workspace, p)
 		}
-		return dirTree(p, ""), nil
+		return dirTree(path, ""), nil
+
+	case "read_file":
+		path := safeJoin(workspace, args["path"])
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+
+	case "write_file", "create_file":
+		path := safeJoin(workspace, args["path"])
+		content := args["content"]
+		// Snapshot before write if file exists
+		if _, err := os.Stat(path); err == nil {
+			createSnapshot(path)
+		} else {
+			// Ensure parent dir exists and snapshot of parent dir? skip snapshot for new file
+			_ = os.MkdirAll(filepath.Dir(path), 0755)
+		}
+		err := os.WriteFile(path, []byte(content), 0644)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✅ File saved (%d bytes): %s", len(content), args["path"]), nil
+
+	case "delete_file":
+		path := safeJoin(workspace, args["path"])
+		// Snapshot before delete
+		createSnapshot(path)
+		if err := os.Remove(path); err != nil {
+			return "", err
+		}
+		return "✅ File removed: " + args["path"], nil
+
+	case "apply_patch":
+		path := safeJoin(workspace, args["path"])
+		patch := args["patch"]
+		// Snapshot before applying patch
+		createSnapshot(path)
+		newContent, err := applyUnifiedPatch(path, patch)
+		if err != nil {
+			return "", err
+		}
+		err = os.WriteFile(path, []byte(newContent), 0644)
+		if err != nil {
+			return "", err
+		}
+		return "✅ Patch applied successfully", nil
+
+	case "search_code":
+		query := args["query"]
+		scope := workspace
+		if s, ok := args["path"]; ok && s != "" {
+			scope = safeJoin(workspace, s)
+		}
+		var results []string
+		_ = filepath.Walk(scope, func(p string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || info.Size() > 1_000_000 || strings.HasPrefix(info.Name(), ".") {
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err == nil && strings.Contains(string(data), query) {
+				rel, _ := filepath.Rel(workspace, p)
+				results = append(results, rel)
+			}
+			return nil
+		})
+		if len(results) == 0 {
+			return "No matches found.", nil
+		}
+		return strings.Join(results, "\n"), nil
+
+	case "file_info":
+		path := safeJoin(workspace, args["path"])
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Path: %s\nSize: %d bytes\nMode: %s\nModTime: %s", path, info.Size(), info.Mode(), info.ModTime().Format(time.RFC3339)), nil
+
 	case "git_status":
-		return runGit("status", "--short")
+		cmd := exec.Command("git", "status", "--short")
+		cmd.Dir = workspace
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git status error: %v", err)
+		}
+		s := string(out)
+		if s == "" {
+			s = "(working directory clean)"
+		}
+		return s, nil
+
 	case "git_diff":
-		return runGit("diff")
-	case "git_log":
-		count := args["count"]
-		if count == "" {
-			count = "5"
+		cmd := exec.Command("git", "diff")
+		cmd.Dir = workspace
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git diff error: %v", err)
 		}
-		return runGit("log", "-n", count, "--oneline")
-	case "git_branch":
-		return runGit("branch", "-a")
+		s := string(out)
+		if s == "" {
+			s = "(no uncommitted changes)"
+		}
+		return s, nil
+
 	case "run_command":
-		t := 60
-		if v, e := strconv.Atoi(args["timeout"]); e == nil && v > 0 && v <= 600 {
-			t = v
+		cmdStr := args["command"]
+		timeout := 60
+		if t, ok := args["timeout"]; ok {
+			_, _ = fmt.Sscanf(t, "%d", &timeout)
 		}
-		return executeShellCommand(args["command"], t)
-	case "run_test":
-		if projInfo.TestCommand == "" {
-			return "No test command detected.", nil
+
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("cmd", "/C", cmdStr)
+		} else {
+			cmd = exec.Command("sh", "-c", cmdStr)
 		}
-		return executeShellCommand(projInfo.TestCommand, 90)
-	case "run_linter":
-		if projInfo.Type == "Go Modules" {
-			return executeShellCommand("go vet ./...", 60)
+
+		cmd.Dir = workspace
+		var outBuf, errBuf bytes.Buffer
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &errBuf
+
+		if err := cmd.Start(); err != nil {
+			return "", err
 		}
-		return "No default linter configured.", nil
-	case "project_info":
-		return fmt.Sprintf("Type: %s\nTests: %s\nFiles: %d\nGit: %v\nRules: %v", projInfo.Type, projInfo.TestCommand, projInfo.FilesCount, projInfo.IsGit, projInfo.Rules != ""), nil
-	case "env_info":
-		return fmt.Sprintf("OS: %s\nArch: %s\nRuntime: %s\nWorkspace: %s", runtime.GOOS, runtime.GOARCH, runtime.Version(), workspace), nil
+
+		done := make(chan error)
+		go func() { done <- cmd.Wait() }()
+
+		select {
+		case err := <-done:
+			out := outBuf.String()
+			if errBuf.Len() > 0 {
+				out += "\n[stderr]\n" + errBuf.String()
+			}
+			if err != nil {
+				return out + fmt.Sprintf("\nExit status: %v", err), nil
+			}
+			if out == "" {
+				out = "(command executed successfully with no output)"
+			}
+			return out, nil
+		case <-time.After(time.Duration(timeout) * time.Second):
+			_ = cmd.Process.Kill()
+			return "", fmt.Errorf("execution timed out (%d sec)", timeout)
+		}
 	}
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
-func atomicWrite(path string, data []byte, perm os.FileMode) error {
-	tmp := path + ".nooty-tmp"
-	if e := os.WriteFile(tmp, data, perm); e != nil {
-		return e
+// ---------- Unified Patch Parser (basic) ----------
+func applyUnifiedPatch(filePath, patch string) (string, error) {
+	// Read original file
+	orig, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
 	}
-	if e := os.Rename(tmp, path); e != nil {
-		_ = os.Remove(tmp)
-		return e
-	}
-	return nil
-}
-func searchFiles(pattern string) string {
-	var out []string
-	_ = filepath.Walk(workspace, func(p string, info os.FileInfo, e error) error {
-		if e != nil || info == nil || info.IsDir() || strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) || strings.Contains(p, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
-			return nil
-		}
-		if strings.Contains(strings.ToLower(info.Name()), strings.ToLower(pattern)) {
-			r, _ := filepath.Rel(workspace, p)
-			out = append(out, r)
-		}
-		return nil
-	})
-	if len(out) == 0 {
-		return "No matching files found."
-	}
-	sort.Strings(out)
-	return strings.Join(out, "\n")
-}
-func searchCode(query, scope string) string {
-	root := workspace
-	if scope != "" && scope != "." {
-		root = safeJoin(workspace, scope)
-	}
-	var out []string
-	_ = filepath.Walk(root, func(p string, info os.FileInfo, e error) error {
-		if e != nil || info == nil || info.IsDir() || info.Size() > 1000000 || strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) || strings.Contains(p, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
-			return nil
-		}
-		b, e := os.ReadFile(p)
-		if e == nil && strings.Contains(string(b), query) {
-			r, _ := filepath.Rel(workspace, p)
-			out = append(out, r)
-		}
-		return nil
-	})
-	if len(out) == 0 {
-		return "No matches found."
-	}
-	sort.Strings(out)
-	return strings.Join(out, "\n")
-}
-func findSymbol(sym string) string {
-	var out []string
-	_ = filepath.Walk(workspace, func(p string, info os.FileInfo, e error) error {
-		if e != nil || info == nil || info.IsDir() || info.Size() > 500000 {
-			return nil
-		}
-		b, e := os.ReadFile(p)
-		if e != nil {
-			return nil
-		}
-		for i, line := range strings.Split(string(b), "\n") {
-			if strings.Contains(line, sym) && (strings.Contains(line, "func ") || strings.Contains(line, "class ") || strings.Contains(line, "function ") || strings.Contains(line, "def ")) {
-				r, _ := filepath.Rel(workspace, p)
-				out = append(out, fmt.Sprintf("%s:%d -> %s", r, i+1, strings.TrimSpace(line)))
+	lines := strings.Split(string(orig), "\n")
+
+	// Parse patch
+	// Expect standard unified diff, but we'll simplify: if patch starts with "---" and "+++" we ignore,
+	// then look for hunks starting with @@.
+	patchLines := strings.Split(patch, "\n")
+	var newLines []string
+	lineIdx := 0 // index into original lines
+	hunkStart := -1
+	hunkOldCount, hunkNewCount := 0, 0
+	inHunk := false
+
+	for _, pl := range patchLines {
+		pl = strings.TrimRight(pl, "\r")
+		if strings.HasPrefix(pl, "@@") {
+			// parse hunk header: @@ -l,c +l,c @@
+			re := regexp.MustCompile(`@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@`)
+			matches := re.FindStringSubmatch(pl)
+			if len(matches) < 5 {
+				return "", fmt.Errorf("invalid hunk header: %s", pl)
 			}
-		}
-		return nil
-	})
-	if len(out) == 0 {
-		return "No symbol definitions found."
-	}
-	return strings.Join(out, "\n")
-}
-func dirTree(root, indent string) string {
-	ents, e := os.ReadDir(root)
-	if e != nil {
-		return e.Error()
-	}
-	var b strings.Builder
-	shown := 0
-	for _, x := range ents {
-		if strings.HasPrefix(x.Name(), ".") || x.Name() == "node_modules" || x.Name() == "vendor" {
+			hunkStart, _ = strconv.Atoi(matches[1])
+			hunkOldCount = 1
+			if matches[2] != "" {
+				hunkOldCount, _ = strconv.Atoi(matches[2])
+			}
+			hunkNewCount = 1
+			if matches[4] != "" {
+				hunkNewCount, _ = strconv.Atoi(matches[4])
+			}
+			// Adjust lineIdx to hunkStart-1 (0-indexed)
+			lineIdx = hunkStart - 1
+			inHunk = true
 			continue
 		}
-		shown++
+		if !inHunk {
+			continue
+		}
+		if strings.HasPrefix(pl, "---") || strings.HasPrefix(pl, "+++") {
+			continue
+		}
+		if strings.HasPrefix(pl, "-") {
+			// skip line (deletion)
+			lineIdx++ // move past original line
+		} else if strings.HasPrefix(pl, "+") {
+			// add line
+			newLines = append(newLines, pl[1:])
+		} else if pl == " " || pl == "" {
+			// context line
+			if lineIdx < len(lines) {
+				newLines = append(newLines, lines[lineIdx])
+			}
+			lineIdx++
+		} else {
+			return "", fmt.Errorf("unexpected patch line: %s", pl)
+		}
+	}
+	// Append remaining original lines after last hunk
+	if lineIdx < len(lines) {
+		newLines = append(newLines, lines[lineIdx:]...)
+	}
+
+	return strings.Join(newLines, "\n"), nil
+}
+
+func dirTree(root, indent string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err.Error()
+	}
+	var out string
+	for i, e := range entries {
 		prefix := indent + "├── "
-		next := indent + "│   "
-		if shown == len(ents) {
+		childIndent := indent + "│   "
+		if i == len(entries)-1 {
 			prefix = indent + "└── "
-			next = indent + "    "
+			childIndent = indent + "    "
 		}
-		b.WriteString(prefix + x.Name() + "\n")
-		if x.IsDir() {
-			b.WriteString(dirTree(filepath.Join(root, x.Name()), next))
+		out += prefix + e.Name() + "\n"
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			out += dirTree(filepath.Join(root, e.Name()), childIndent)
 		}
 	}
-	return b.String()
+	return out
 }
 
-func applyPatchContent(original, patch string) (string, error) {
-	re := regexp.MustCompile(`(?s)<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE`)
-	m := re.FindAllStringSubmatch(patch, -1)
-	if len(m) == 0 {
-		return "", fmt.Errorf("invalid patch format")
+func safeJoin(base, rel string) string {
+	abs := filepath.Join(base, rel)
+	abs = filepath.Clean(abs)
+	if !strings.HasPrefix(abs, base) {
+		return base
 	}
-	result := original
-	for _, x := range m {
-		if !strings.Contains(result, x[1]) {
-			return "", fmt.Errorf("search block not found")
-		}
-		result = strings.Replace(result, x[1], x[2], 1)
-	}
-	return result, nil
-}
-func produceDiff(file, oldText, newText string) string {
-	ol := strings.Split(oldText, "\n")
-	nl := strings.Split(newText, "\n")
-	var b strings.Builder
-	b.WriteString("--- " + file + "\n+++ " + file + "\n")
-	max := len(ol)
-	if len(nl) > max {
-		max = len(nl)
-	}
-	changes := 0
-	for i := 0; i < max; i++ {
-		var a, z string
-		if i < len(ol) {
-			a = ol[i]
-		}
-		if i < len(nl) {
-			z = nl[i]
-		}
-		if a != z {
-			if i < len(ol) {
-				b.WriteString("- " + a + "\n")
-			}
-			if i < len(nl) {
-				b.WriteString("+ " + z + "\n")
-			}
-			changes++
-		}
-	}
-	if changes == 0 {
-		return "(no line changes)"
-	}
-	return b.String()
+	return abs
 }
 
-func executeShellCommand(command string, timeout int) (string, error) {
+// ---------- Direct Shell Command Engine ----------
+func handleShellBang(cmd string) {
+	cmd = strings.TrimSpace(cmd)
+	fmt.Printf("\n%s⚡ Direct Shell Command:%s %s\n", c(yellow), c(reset), cmd)
+	fmt.Print("Execute? [Y/n]: ")
+	reader := bufio.NewReader(os.Stdin)
+	resp, _ := reader.ReadString('\n')
+	resp = strings.TrimSpace(strings.ToLower(resp))
+	if resp != "n" && resp != "no" {
+		executeShell(cmd)
+	} else {
+		fmt.Println("Cancelled.")
+	}
+}
+
+func executeShell(command string) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/C", command)
@@ -1101,345 +1391,386 @@ func executeShellCommand(command string, timeout int) (string, error) {
 		cmd = exec.Command("sh", "-c", command)
 	}
 	cmd.Dir = workspace
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if e := cmd.Start(); e != nil {
-		return "", e
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%s❌ Command failed: %v%s\n", c(red), err, c(reset))
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case e := <-done:
-		s := out.String()
-		if errOut.Len() > 0 {
-			s += "\n[stderr]\n" + errOut.String()
-		}
-		if e != nil {
-			s += fmt.Sprintf("\nExit status: %v", e)
-		}
-		if s == "" {
-			s = "(no output)"
-		}
-		return s, nil
-	case <-time.After(time.Duration(timeout) * time.Second):
-		_ = cmd.Process.Kill()
-		return "", fmt.Errorf("execution timed out (%ds)", timeout)
-	}
-}
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = workspace
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if e := cmd.Run(); e != nil {
-		msg := strings.TrimSpace(errOut.String())
-		if msg == "" {
-			msg = e.Error()
-		}
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
-	}
-	s := strings.TrimSpace(out.String())
-	if s == "" {
-		s = "(no output)"
-	}
-	return s, nil
 }
 
-func runInit() {
-	_ = os.MkdirAll(snapshotDir, 0700)
-	rules := filepath.Join(projectNootyDir, "rules.md")
-	if !exists(rules) {
-		sample := "# NootyCLI Project Rules\n- Maintain clean architecture.\n- Write tests for new functions.\n- Do not modify database migrations automatically.\n- Prefer returned errors over panics.\n"
-		if e := os.WriteFile(rules, []byte(sample), 0644); e != nil {
-			fmt.Println("❌", e)
-			return
+// ---------- Project Init & Rules ----------
+func initializeProject() {
+	fmt.Println(c(bold) + "🔧 Initializing .nooty project workspace..." + c(reset))
+	nooDir := filepath.Join(workspace, ".nooty")
+	if err := os.MkdirAll(nooDir, 0755); err != nil {
+		fmt.Printf("Error creating .nooty: %v\n", err)
+		return
+	}
+	// Create rules.md if not exist
+	rulesFile := filepath.Join(nooDir, "rules.md")
+	if _, err := os.Stat(rulesFile); os.IsNotExist(err) {
+		defaultRules := `# Project Rules
+# Add your custom instructions here, one per line.
+# Examples:
+# - Never modify migrations automatically.
+# - Use Python 3.11.
+# - Follow PEP 8.
+# - Run tests after every change.
+`
+		if err := os.WriteFile(rulesFile, []byte(defaultRules), 0644); err != nil {
+			fmt.Printf("Error creating rules.md: %v\n", err)
+		} else {
+			fmt.Println("Created .nooty/rules.md")
 		}
 	}
-	ctx := filepath.Join(projectNootyDir, "context.json")
-	if !exists(ctx) {
-		_ = os.WriteFile(ctx, []byte("{\n  \"project_notes\": \"\"\n}\n"), 0644)
-	}
-	refreshWorkspaceState()
-	fmt.Printf("✅ .nooty initialized in %s\n", workspace)
-}
-
-func createSnapshot(rel string) error {
-	full := safeJoin(workspace, rel)
-	b, e := os.ReadFile(full)
-	if e != nil {
-		if os.IsNotExist(e) {
-			return nil
-		}
-		return e
-	}
-	ts := time.Now().Format("20060102-150405.000000000")
-	name := fmt.Sprintf("%s_%s.bak", ts, filepath.Base(rel))
-	path := filepath.Join(snapshotDir, name)
-	if e = atomicWrite(path, b, 0600); e != nil {
-		return e
-	}
-	snapshots = append(snapshots, Snapshot{ID: fmt.Sprintf("snap_%d", len(snapshots)+1), Timestamp: time.Now().Format(time.RFC3339Nano), FilePath: rel, BackupPath: path})
-	return saveSnapshots()
-}
-func undoLastSnapshot() {
-	if len(snapshots) == 0 {
-		fmt.Println("⚠️ No snapshots.")
-		return
-	}
-	last := snapshots[len(snapshots)-1]
-	b, e := os.ReadFile(last.BackupPath)
-	if e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	if e = atomicWrite(safeJoin(workspace, last.FilePath), b, 0644); e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	snapshots = snapshots[:len(snapshots)-1]
-	_ = saveSnapshots()
-	fmt.Println("✅ Reverted:", last.FilePath)
-}
-func listSnapshots() {
-	if len(snapshots) == 0 {
-		fmt.Println("📜 No snapshots.")
-		return
-	}
-	for _, s := range snapshots {
-		fmt.Printf("• %s  %s  %s\n", s.ID, s.FilePath, s.Timestamp)
-	}
-}
-func loadSnapshots() {
-	b, e := os.ReadFile(snapshotLog)
-	if e != nil {
-		snapshots = []Snapshot{}
-		return
-	}
-	if json.Unmarshal(b, &snapshots) != nil {
-		snapshots = []Snapshot{}
-	}
-}
-func saveSnapshots() error {
-	b, e := json.MarshalIndent(snapshots, "", "  ")
-	if e != nil {
-		return e
-	}
-	return atomicWrite(snapshotLog, b, 0600)
-}
-
-func safeJoin(base, rel string) string {
-	baseAbs, _ := filepath.Abs(base)
-	if rel == "" {
-		return baseAbs
-	}
-	candidate := rel
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(baseAbs, candidate)
-	}
-	candidate, _ = filepath.Abs(candidate)
-	r, e := filepath.Rel(baseAbs, candidate)
-	if e != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return baseAbs
-	}
-	return candidate
-}
-
-func runReview() {
-	diff, e := runGit("diff")
-	if e != nil || diff == "(no output)" {
-		fmt.Println("ℹ️ No uncommitted changes.")
-		return
-	}
-	messages := []Message{{Role: "system", Content: "You are a senior code reviewer. Find correctness, security, performance, and maintainability issues. Be concise."}, {Role: "user", Content: "Review this git diff:\n\n" + truncateString(diff, 20000)}}
-	streamResponse(messages)
-}
-func runExplain(target string) {
-	p := safeJoin(workspace, target)
-	b, e := os.ReadFile(p)
-	if e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	messages := []Message{{Role: "system", Content: "You are a software architect. Explain the target code and its architecture clearly."}, {Role: "user", Content: "Explain " + target + ":\n\n" + truncateString(string(b), 20000)}}
-	streamResponse(messages)
-}
-func runAutoCommit() {
-	diff, e := runGit("diff")
-	if e != nil || diff == "(no output)" {
-		fmt.Println("ℹ️ No changes.")
-		return
-	}
-	msg, e := getModelResponseText([]Message{{Role: "system", Content: "Return ONLY one Conventional Commit message line."}, {Role: "user", Content: truncateString(diff, 20000)}})
-	if e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	msg = strings.ReplaceAll(strings.TrimSpace(msg), "\n", " ")
-	fmt.Println("Suggested commit:", msg)
-	if !confirm("Commit? [Y/n]: ") {
-		return
-	}
-	out, e := runGit("add", "-A")
-	if e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	_ = out
-	if out, e = runGit("commit", "-m", msg); e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	fmt.Println(out)
-}
-func runAutoTests() {
-	if projInfo.TestCommand == "" {
-		fmt.Println("⚠️ No test runner detected.")
-		return
-	}
-	fmt.Println("🧪", projInfo.TestCommand)
-	out, e := executeShellCommand(projInfo.TestCommand, 90)
-	fmt.Println(out)
-	if e != nil {
-		fmt.Println("❌", e)
-	}
-}
-func handleGitCommand(args []string) {
-	if len(args) == 0 {
-		args = []string{"status", "--short"}
-	}
-	out, e := runGit(args...)
-	if e != nil {
-		fmt.Println("❌", e)
+	// Create snapshots dir
+	snapDir := filepath.Join(nooDir, "snapshots")
+	if err := os.MkdirAll(snapDir, 0755); err != nil {
+		fmt.Printf("Error creating snapshots dir: %v\n", err)
 	} else {
-		fmt.Println(out)
+		fmt.Println("Created .nooty/snapshots/")
 	}
-}
-func handleShellBang(cmd string) {
-	cmd = strings.TrimSpace(cmd)
-	if cmd == "" {
-		return
-	}
-	fmt.Println("⚡", cmd)
-	if confirm("Execute? [Y/n]: ") {
-		out, e := executeShellCommand(cmd, 120)
-		fmt.Println(out)
-		if e != nil {
-			fmt.Println("❌", e)
+	// Create project memory file if not exists
+	pmFile := filepath.Join(nooDir, "project_memory.json")
+	if _, err := os.Stat(pmFile); os.IsNotExist(err) {
+		if err := os.WriteFile(pmFile, []byte("[]"), 0644); err != nil {
+			fmt.Printf("Error creating project_memory.json: %v\n", err)
+		} else {
+			fmt.Println("Created .nooty/project_memory.json")
 		}
 	}
+	fmt.Println(c(green) + "✅ Project workspace initialized." + c(reset))
 }
-func handleWorkspace(args []string) {
-	if len(args) == 0 || args[0] == "show" {
-		fmt.Println("📁 Workspace:", formatPath(workspace))
-		return
+
+func loadProjectRules() string {
+	rulesFile := filepath.Join(workspace, ".nooty", "rules.md")
+	data, err := os.ReadFile(rulesFile)
+	if err != nil {
+		return ""
 	}
-	if args[0] != "set" || len(args) < 2 {
-		fmt.Println("Usage: /workspace set <path>")
-		return
-	}
-	p, e := filepath.Abs(args[1])
-	if e != nil {
-		fmt.Println("❌", e)
-		return
-	}
-	i, e := os.Stat(p)
-	if e != nil || !i.IsDir() {
-		fmt.Println("❌ Directory does not exist.")
-		return
-	}
-	workspace = p
-	config.Workspace = p
-	saveConfig()
-	refreshWorkspaceState()
-	fmt.Println("✅ Workspace:", formatPath(workspace))
+	return string(data)
 }
-func runDoctor() {
-	fmt.Println("\n🏥 NootyCLI Doctor")
-	fmt.Println("Provider:", config.ProviderEndpoint)
-	fmt.Println("Model:", config.Model)
-	fmt.Println("API Key:", maskAPIKey(config.APIKey))
-	fmt.Println("Workspace:", formatPath(workspace))
-	fmt.Println("Project:", projInfo.Type, "Git:", projInfo.IsGit)
-	if _, e := fetchAvailableModels(); e != nil {
-		fmt.Println("❌ Provider:", e)
-	} else {
-		fmt.Println("✅ Provider: OK via", activeDNSName)
+
+// ---------- Memory Management (Global + Project) ----------
+func loadMemories() {
+	data, err := os.ReadFile(memFile)
+	if err != nil {
+		memories = []Memory{}
+		return
 	}
+	_ = json.Unmarshal(data, &memories)
 }
+
+func saveMemories() {
+	data, _ := json.MarshalIndent(memories, "", "  ")
+	_ = os.WriteFile(memFile, data, 0600)
+}
+
+func loadProjectMemories() {
+	data, err := os.ReadFile(projMemFile)
+	if err != nil {
+		projectMemories = []Memory{}
+		return
+	}
+	_ = json.Unmarshal(data, &projectMemories)
+}
+
+func saveProjectMemories() {
+	if projMemFile == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(projMemFile), 0755)
+	data, _ := json.MarshalIndent(projectMemories, "", "  ")
+	_ = os.WriteFile(projMemFile, data, 0644)
+}
+
 func handleMemory(args []string) {
 	if len(args) == 0 {
-		args = []string{"list"}
+		fmt.Println("Usage: /memory list | add <text> | forget <id> | project add <text> | project list")
+		return
 	}
+	// Handle project memory subcommand
+	if args[0] == "project" {
+		if len(args) < 2 {
+			fmt.Println("Usage: /memory project list | add <text> | forget <id>")
+			return
+		}
+		switch args[1] {
+		case "list":
+			if len(projectMemories) == 0 {
+				fmt.Println("🧠 No project memories found.")
+				return
+			}
+			fmt.Println(c(bold) + "\n📁 Project Memories:" + c(reset))
+			for _, m := range projectMemories {
+				fmt.Printf("  [%d] (%s) %s\n", m.ID, m.Tag, m.Content)
+			}
+			fmt.Println()
+		case "add":
+			if len(args) < 3 {
+				fmt.Println("Usage: /memory project add <text>")
+				return
+			}
+			text := strings.Join(args[2:], " ")
+			m := Memory{
+				ID:      len(projectMemories) + 1,
+				Tag:     "project",
+				Content: text,
+				Added:   time.Now().Format(time.RFC3339),
+			}
+			projectMemories = append(projectMemories, m)
+			saveProjectMemories()
+			fmt.Printf("✅ Saved project memory ID [%d]\n", m.ID)
+		case "forget":
+			if len(args) < 3 {
+				fmt.Println("Usage: /memory project forget <id>")
+				return
+			}
+			id, _ := strconv.Atoi(args[2])
+			var newMem []Memory
+			for _, m := range projectMemories {
+				if m.ID != id {
+					newMem = append(newMem, m)
+				}
+			}
+			projectMemories = newMem
+			saveProjectMemories()
+			fmt.Printf("✅ Project memory [%d] removed.\n", id)
+		default:
+			fmt.Println("Usage: /memory project list | add <text> | forget <id>")
+		}
+		return
+	}
+
+	// Global memory commands
 	switch args[0] {
 	case "list":
 		if len(memories) == 0 {
-			fmt.Println("🧠 No memories.")
+			fmt.Println("🧠 No global memories found.")
 			return
 		}
+		fmt.Println(c(bold) + "\n🧠 Global Memories:" + c(reset))
 		for _, m := range memories {
-			fmt.Printf("[%d] (%s) %s\n", m.ID, m.Tag, m.Content)
+			fmt.Printf("  [%d] (%s) %s\n", m.ID, m.Tag, m.Content)
 		}
+		fmt.Println()
 	case "add":
 		if len(args) < 2 {
 			fmt.Println("Usage: /memory add <text>")
 			return
 		}
-		m := Memory{ID: len(memories) + 1, Tag: "context", Content: strings.Join(args[1:], " "), Added: time.Now().Format(time.RFC3339)}
+		text := strings.Join(args[1:], " ")
+		m := Memory{
+			ID:      len(memories) + 1,
+			Tag:     "context",
+			Content: text,
+			Added:   time.Now().Format(time.RFC3339),
+		}
 		memories = append(memories, m)
 		saveMemories()
-		fmt.Println("✅ Saved memory", m.ID)
+		fmt.Printf("✅ Saved memory ID [%d]\n", m.ID)
 	case "forget":
 		if len(args) < 2 {
+			fmt.Println("Usage: /memory forget <id>")
 			return
 		}
 		id, _ := strconv.Atoi(args[1])
-		next := memories[:0]
+		var newMem []Memory
 		for _, m := range memories {
 			if m.ID != id {
-				next = append(next, m)
+				newMem = append(newMem, m)
 			}
 		}
-		memories = next
+		memories = newMem
 		saveMemories()
-		fmt.Println("✅ Removed", id)
-	}
-}
-func handleSafety(args []string) {
-	if len(args) == 0 {
-		fmt.Println("🛡️ Safety:", config.Safety)
-		return
-	}
-	m := strings.ToLower(args[0])
-	if m != "strict" && m != "balanced" && m != "auto" {
-		fmt.Println("Usage: /safety strict|balanced|auto")
-		return
-	}
-	config.Safety = m
-	saveConfig()
-	fmt.Println("✅ Safety:", m)
-}
-func showHistory() {
-	if len(sessionMessages) == 0 {
-		fmt.Println("💬 No history.")
-		return
-	}
-	for _, m := range sessionMessages {
-		fmt.Printf("%s: %s\n", m.Role, truncateString(m.Content, 200))
+		fmt.Printf("✅ Memory [%d] removed.\n", id)
+	default:
+		fmt.Println("Usage: /memory list | add <text> | forget <id> | project ...")
 	}
 }
 
+func handleSafety(args []string) {
+	if len(args) == 0 {
+		fmt.Printf("🛡️ Safety Mode: %s\n", config.Safety)
+		return
+	}
+	switch args[0] {
+	case "strict", "balanced", "auto":
+		config.Safety = args[0]
+		saveConfig()
+		fmt.Printf("✅ Safety updated to %s.\n", config.Safety)
+	default:
+		fmt.Println("Usage: /safety strict|balanced|auto")
+	}
+}
+
+func showHistory() {
+	if len(sessionMessages) == 0 {
+		fmt.Println("💬 History clean.")
+		return
+	}
+	fmt.Println(c(bold) + "\n📜 Session Log:" + c(reset))
+	for _, msg := range sessionMessages {
+		role := "👤 User"
+		if msg.Role == "assistant" {
+			role = "🤖 Nooty"
+		}
+		fmt.Printf("%s%s:%s %s\n", c(bold), role, c(reset), msg.Content)
+	}
+	fmt.Println()
+}
+
+// ---------- Session Management ----------
+func handleSession(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: /session new | save <name> | load <name> | list")
+		return
+	}
+	switch args[0] {
+	case "new":
+		sessionMessages = nil
+		fmt.Println("🆕 New session started.")
+	case "save":
+		if len(args) < 2 {
+			fmt.Println("Usage: /session save <name>")
+			return
+		}
+		name := args[1]
+		file := filepath.Join(nootyDir, "chats", name+".json")
+		data, _ := json.MarshalIndent(sessionMessages, "", "  ")
+		if err := os.WriteFile(file, data, 0644); err != nil {
+			fmt.Printf("Error saving session: %v\n", err)
+			return
+		}
+		fmt.Printf("✅ Session saved to %s\n", file)
+	case "load":
+		if len(args) < 2 {
+			fmt.Println("Usage: /session load <name>")
+			return
+		}
+		name := args[1]
+		file := filepath.Join(nootyDir, "chats", name+".json")
+		data, err := os.ReadFile(file)
+		if err != nil {
+			fmt.Printf("Error loading session: %v\n", err)
+			return
+		}
+		_ = json.Unmarshal(data, &sessionMessages)
+		fmt.Printf("✅ Session '%s' loaded (%d messages).\n", name, len(sessionMessages))
+	case "list":
+		files, err := filepath.Glob(filepath.Join(nootyDir, "chats", "*.json"))
+		if err != nil || len(files) == 0 {
+			fmt.Println("No saved sessions.")
+			return
+		}
+		fmt.Println("📁 Saved Sessions:")
+		for _, f := range files {
+			fmt.Printf("  - %s\n", filepath.Base(f))
+		}
+	default:
+		fmt.Println("Usage: /session new | save <name> | load <name> | list")
+	}
+}
+
+// ---------- Test Runner ----------
+func runTest() {
+	fmt.Println(c(bold) + "🧪 Running project tests..." + c(reset))
+	cmdStr := detectTestCommand()
+	if cmdStr == "" {
+		fmt.Println("⚠️ Could not detect test command for this project.")
+		return
+	}
+	fmt.Printf("Executing: %s\n", cmdStr)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/C", cmdStr)
+	} else {
+		cmd = exec.Command("sh", "-c", cmdStr)
+	}
+	cmd.Dir = workspace
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%s❌ Tests failed: %v%s\n", c(red), err, c(reset))
+	} else {
+		fmt.Println(c(green) + "✅ Tests passed." + c(reset))
+	}
+}
+
+func detectTestCommand() string {
+	projInfo := detectProjectInfo(workspace)
+	switch projInfo {
+	case "Go":
+		return "go test ./..."
+	case "Node.js":
+		return "npm test"
+	case "Python":
+		// Check if pytest is used
+		if _, err := os.Stat(filepath.Join(workspace, "pytest.ini")); err == nil {
+			return "pytest"
+		}
+		if _, err := os.Stat(filepath.Join(workspace, "pyproject.toml")); err == nil {
+			// Could be poetry or pytest; assume pytest
+			return "pytest"
+		}
+		return "python -m unittest discover"
+	case "Rust":
+		return "cargo test"
+	case "PHP":
+		return "composer test"
+	default:
+		return ""
+	}
+}
+
+// ---------- Code Review ----------
+func runReview() {
+	fmt.Println(c(bold) + "🔍 AI Code Review of git diff..." + c(reset))
+	// Get git diff
+	cmd := exec.Command("git", "diff")
+	cmd.Dir = workspace
+	diffOut, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("Error getting git diff: %v\n", err)
+		return
+	}
+	diff := string(diffOut)
+	if diff == "" {
+		fmt.Println("No uncommitted changes to review.")
+		return
+	}
+
+	// Build prompt for review
+	prompt := "Review the following git diff. Provide a structured code review with critical issues, warnings, and suggestions. Format your response as:\n\n🔴 Critical\n...\n\n🟡 Warning\n...\n\n🟢 Good\n...\n\nDiff:\n" + diff
+	messages := []Message{
+		{Role: "system", Content: "You are a senior code reviewer. Be concise and focus on important issues."},
+		{Role: "user", Content: prompt},
+	}
+	review, err := getModelResponseText(messages)
+	if err != nil {
+		fmt.Printf("Review failed: %v\n", err)
+		return
+	}
+	fmt.Println(c(green) + "\n📝 Code Review Report:" + c(reset))
+	fmt.Println(review)
+}
+
+// ---------- Persistence Methods ----------
 func loadConfig() {
-	b, e := os.ReadFile(configFile)
-	if e != nil {
-		config = Config{ProviderEndpoint: "https://api.openai.com/v1", APIKey: os.Getenv("OPENAI_API_KEY"), Model: "gpt-4o-mini", Safety: "balanced"}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		config = Config{
+			ProviderEndpoint: "https://api.openai.com/v1",
+			APIKey:           os.Getenv("OPENAI_API_KEY"),
+			Model:            "gpt-4o-mini",
+			Safety:           "strict",
+		}
 		if config.APIKey == "" {
 			config.APIKey = os.Getenv("NOOTY_API_KEY")
 		}
 		return
 	}
-	_ = json.Unmarshal(b, &config)
+	_ = json.Unmarshal(data, &config)
 	if config.APIKey == "" {
 		config.APIKey = os.Getenv("OPENAI_API_KEY")
 		if config.APIKey == "" {
@@ -1447,21 +1778,59 @@ func loadConfig() {
 		}
 	}
 	if config.Safety == "" {
-		config.Safety = "balanced"
+		config.Safety = "strict"
 	}
 }
-func saveConfig() { b, _ := json.MarshalIndent(config, "", "  "); _ = atomicWrite(configFile, b, 0600) }
-func loadMemories() {
-	b, e := os.ReadFile(memFile)
-	if e != nil {
-		memories = []Memory{}
+
+func saveConfig() {
+	data, _ := json.MarshalIndent(config, "", "  ")
+	_ = os.WriteFile(configFile, data, 0600)
+}
+
+// ---------- Utilities ----------
+func handleWorkspace(args []string) {
+	if len(args) == 0 {
+		fmt.Printf("📁 Workspace: %s\n", formatPath(workspace))
 		return
 	}
-	if json.Unmarshal(b, &memories) != nil {
-		memories = []Memory{}
+	switch args[0] {
+	case "show":
+		fmt.Printf("📁 Workspace: %s\n", formatPath(workspace))
+	case "set":
+		if len(args) < 2 {
+			fmt.Println("Usage: /workspace set <path>")
+			return
+		}
+		path, _ := filepath.Abs(args[1])
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			fmt.Println("❌ Directory does not exist.")
+			return
+		}
+		workspace = path
+		config.Workspace = path
+		saveConfig()
+		snapshotDir = filepath.Join(workspace, ".nooty", "snapshots")
+		projMemFile = filepath.Join(workspace, ".nooty", "project_memory.json")
+		loadProjectMemories()
+		fmt.Printf("✅ Workspace set to: %s\n", formatPath(workspace))
+	default:
+		fmt.Println("❌ Subcommand unknown. Use: show | set <path>")
 	}
 }
-func saveMemories() {
-	b, _ := json.MarshalIndent(memories, "", "  ")
-	_ = atomicWrite(memFile, b, 0600)
+
+func runDoctor() {
+	fmt.Println(c(bold) + "\n🏥 NootyCLI Diagnostic Doctor" + c(reset))
+	fmt.Printf("• Provider Endpoint : %s\n", config.ProviderEndpoint)
+	fmt.Printf("• Active Model      : %s\n", config.Model)
+	fmt.Printf("• API Key           : %s\n", maskAPIKey(config.APIKey))
+	fmt.Printf("• Active Workspace  : %s\n", formatPath(workspace))
+	fmt.Printf("• Project Type      : %s\n", detectProjectInfo(workspace))
+	fmt.Print("• Provider Status   : ")
+
+	models, err := fetchAvailableModels()
+	if err != nil {
+		fmt.Printf("%sFAILED (%v)%s\n\n", c(red), err, c(reset))
+	} else {
+		fmt.Printf("%sOK (%d models accessible via %s)%s\n\n", c(green), len(models), activeDNSName, c(reset))
+	}
 }
