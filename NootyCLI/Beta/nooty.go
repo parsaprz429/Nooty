@@ -1,17 +1,5 @@
-// nooty.go — NootyCLI v0.3.0 "Radin Agent Core" – Autonomous Code Agent & Terminal Intelligence
-// Single‑file, zero external dependencies, cross-platform (macOS / Linux / Windows / WSL).
-//
-// 🚀 Compile & Build:
-//   go build -ldflags="-s -w" -o nooty nooty.go
-//
-// 🛠 Usage:
-//   nooty                      → Interactive REPL Mode
-//   nooty "task description"   → Execute single agent task directly
-//   nooty init                 → Initialize .nooty workspace & project rules
-//   nooty review               → Review uncommitted git changes
-//   nooty test                 → Auto-detect and run project unit tests
-//   nooty explain <file>       → Explain architecture & file design
-
+// nooty.go — NootyCLI v0.3.0 "Radin Agent Core"
+// Single-file, zero external dependencies.
 package main
 
 import (
@@ -35,13 +23,9 @@ import (
 	"time"
 )
 
-// ---------- Cross-Platform ANSI Styling Engine ----------
 var useColor = true
 
 func init() {
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("cmd", "/c", "color").Run()
-	}
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		useColor = false
 	}
@@ -67,48 +51,31 @@ const (
 	white   = "\033[37m"
 )
 
-// ---------- Data Models ----------
 type Config struct {
 	ProviderEndpoint string `json:"provider_endpoint"`
 	APIKey           string `json:"api_key"`
 	Model            string `json:"model"`
-	Safety           string `json:"safety"` // strict, balanced, auto
+	Safety           string `json:"safety"`
 	Workspace        string `json:"workspace"`
 }
 
 type Memory struct {
-	ID      int    `json:"id"`
-	Tag     string `json:"tag"`
-	Content string `json:"content"`
-	Added   string `json:"added"`
+	ID                  int `json:"id"`
+	Tag, Content, Added string
 }
-
 type ProjectInfo struct {
-	Type        string `json:"type"`
-	TestCommand string `json:"test_command"`
-	FilesCount  int    `json:"files_count"`
-	Rules       string `json:"rules"`
-	IsGit       bool   `json:"is_git"`
+	Type, TestCommand string
+	FilesCount        int
+	Rules             string
+	IsGit             bool
 }
-
-type Snapshot struct {
-	ID         string `json:"id"`
-	Timestamp  string `json:"timestamp"`
-	FilePath   string `json:"file_path"`
-	BackupPath string `json:"backup_path"`
-}
-
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
+type Snapshot struct{ ID, Timestamp, FilePath, BackupPath string }
+type Message struct{ Role, Content string }
 type ChatRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream"`
 }
-
 type ChatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
@@ -116,273 +83,197 @@ type ChatStreamChunk struct {
 		} `json:"delta"`
 	} `json:"choices"`
 }
-
 type ToolCall struct {
 	Name string
 	Args map[string]string
 }
+type DNSResolver struct{ Name, Address string }
 
-type DNSResolver struct {
-	Name    string
-	Address string
-}
-
-// ---------- Global State ----------
 var (
-	config          Config
-	memories        []Memory
-	snapshots       []Snapshot
-	sessionMessages []Message
-	currentMode     = "cli" // Default to CLI mode in v0.3
-	workspace       string
-	homeDir         string
-	nootyDir        string
-	projectNootyDir string
-	memFile         string
-	configFile      string
-	snapshotDir     string
-	snapshotLog     string
-	projInfo        ProjectInfo
-
-	fallbackDNS = []DNSResolver{
-		{Name: "Direct Connection", Address: ""},
-		{Name: "Electro DNS", Address: "78.157.42.100"},
-		{Name: "Shecan DNS #1", Address: "178.22.122.100"},
-		{Name: "Shecan DNS #2", Address: "185.51.200.2"},
-		{Name: "Begzar DNS #1", Address: "185.55.226.26"},
-		{Name: "Begzar DNS #2", Address: "185.55.225.25"},
+	config                                        Config
+	memories                                      []Memory
+	snapshots                                     []Snapshot
+	sessionMessages                               []Message
+	currentMode                                   = "cli"
+	workspace, homeDir, nootyDir, projectNootyDir string
+	memFile, configFile, snapshotDir, snapshotLog string
+	projInfo                                      ProjectInfo
+	fallbackDNS                                   = []DNSResolver{
+		{"Direct Connection", ""}, {"Electro DNS", "78.157.42.100"},
+		{"Shecan DNS #1", "178.22.122.100"}, {"Shecan DNS #2", "185.51.200.2"},
+		{"Begzar DNS #1", "185.55.226.26"}, {"Begzar DNS #2", "185.55.225.25"},
 	}
 	activeDNSName = "Direct Connection"
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "NootyCLI v0.3.0 — Autonomous Code Agent Core\n\nUsage:\n  nooty [options] [task|subcommand]\n\nCommands:\n  nooty \"fix auth timeout\"  Direct Agent Task\n  nooty init               Initialize project rules & .nooty workspace\n  nooty review             Code review uncommitted changes\n  nooty test               Run auto-detected unit tests\n  nooty explain <file>     Explain target file or architecture\n  nooty doctor             System & API health check\n\nOptions:\n")
+		fmt.Fprintln(os.Stderr, "NootyCLI v0.3.0 — Autonomous Code Agent Core")
+		fmt.Fprintln(os.Stderr, "Usage: nooty [options] [task|subcommand]")
+		fmt.Fprintln(os.Stderr, "Commands: nooty \"task\", init, review, test, explain <file>, ask <question>, doctor")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-
 	var err error
 	homeDir, err = os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "⚠ Error: Cannot locate user home directory.")
-		os.Exit(1)
+		fatal("Cannot locate user home directory")
 	}
-
 	nootyDir = filepath.Join(homeDir, ".nooty")
-	_ = os.MkdirAll(nootyDir, 0700)
 	_ = os.MkdirAll(filepath.Join(nootyDir, "chats"), 0700)
 	configFile = filepath.Join(nootyDir, "config.json")
 	memFile = filepath.Join(nootyDir, "memories.json")
-
 	loadConfig()
 	loadMemories()
-
 	if config.Workspace == "" {
-		cwd, err := os.Getwd()
-		if err == nil {
-			config.Workspace = cwd
-		} else {
+		config.Workspace, _ = os.Getwd()
+		if config.Workspace == "" {
 			config.Workspace = homeDir
 		}
 	}
 	workspace = config.Workspace
+	refreshWorkspaceState()
 
-	// Setup local project workspace directory
-	projectNootyDir = filepath.Join(workspace, ".nooty")
-	snapshotDir = filepath.Join(projectNootyDir, "snapshots")
-	snapshotLog = filepath.Join(projectNootyDir, "snapshots.json")
-	_ = os.MkdirAll(snapshotDir, 0700)
-	loadSnapshots()
-
-	// Detect project attributes
-	projInfo = detectProject(workspace)
-
-	// Direct CLI Arguments Dispatcher
 	args := flag.Args()
 	if len(args) > 0 {
-		subcmd := args[0]
-		switch subcmd {
+		switch args[0] {
 		case "init":
 			runInit()
-			return
 		case "doctor":
 			runDoctor()
-			return
 		case "review":
 			runReview()
-			return
 		case "test":
 			runAutoTests()
-			return
 		case "explain":
 			target := "."
 			if len(args) > 1 {
 				target = args[1]
 			}
 			runExplain(target)
-			return
 		case "ask":
 			if len(args) > 1 {
+				currentMode = "chat"
 				handleChat(strings.Join(args[1:], " "))
 			} else {
 				fmt.Println("Usage: nooty ask <question>")
 			}
-			return
 		default:
-			// Treat full argument list as direct Agent Task
-			task := strings.Join(args, " ")
 			currentMode = "cli"
 			drawHeader()
-			fmt.Printf("%s🎯 Direct Task Received:%s %s\n\n", c(bold)+c(yellow), c(reset), task)
+			task := strings.Join(args, " ")
+			fmt.Printf("%s🎯 Direct Task:%s %s\n\n", c(bold)+c(yellow), c(reset), task)
 			handleChat(task)
-			return
 		}
+		return
 	}
-
 	drawHeader()
 	repl()
 }
 
-// ---------- Sleek Header ----------
+func fatal(msg string) { fmt.Fprintln(os.Stderr, "⚠ "+msg); os.Exit(1) }
+
+func refreshWorkspaceState() {
+	projectNootyDir = filepath.Join(workspace, ".nooty")
+	snapshotDir = filepath.Join(projectNootyDir, "snapshots")
+	snapshotLog = filepath.Join(projectNootyDir, "snapshots.json")
+	_ = os.MkdirAll(snapshotDir, 0700)
+	loadSnapshots()
+	projInfo = detectProject(workspace)
+}
+
 func drawHeader() {
 	width := 66
 	line := strings.Repeat("─", width-2)
-
 	fmt.Println(c(cyan) + "┌" + line + "┐" + c(reset))
 	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(bold)+c(yellow), centerText(" NOOTY CLI ", width-2), c(cyan), c(reset))
 	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.3.0 Radin Agent Core — Code Agent Intelligence", width-2), c(cyan), c(reset))
 	fmt.Println(c(cyan) + "├" + line + "┤" + c(reset))
-
-	prettyWorkspace := formatPath(workspace)
-	gitStatusStr := "Not a Git Repo"
+	git := "Not a Git Repo"
 	if projInfo.IsGit {
-		gitStatusStr = "Git Enabled"
+		git = "Git Enabled"
 	}
-
-	entries := [][]string{
-		{"Provider", truncateString(config.ProviderEndpoint, 38)},
-		{"Model", config.Model},
-		{"Project", fmt.Sprintf("%s (%s)", projInfo.Type, gitStatusStr)},
-		{"Workspace", truncateString(prettyWorkspace, 38)},
-		{"DNS Shield", activeDNSName},
-		{"Mode / Safety", fmt.Sprintf("%s (%s)", strings.ToUpper(currentMode), config.Safety)},
-	}
-
+	entries := [][]string{{"Provider", truncateString(config.ProviderEndpoint, 38)}, {"Model", config.Model}, {"Project", fmt.Sprintf("%s (%s)", projInfo.Type, git)}, {"Workspace", truncateString(formatPath(workspace), 38)}, {"DNS Shield", activeDNSName}, {"Mode / Safety", fmt.Sprintf("%s (%s)", strings.ToUpper(currentMode), config.Safety)}}
 	for _, e := range entries {
-		val := fmt.Sprintf("%-38s", e[1])
-		fmt.Printf("%s│%s %-12s: %s%s %s│%s\n",
-			c(cyan), c(bold)+c(white), e[0], c(green), val, c(cyan), c(reset))
+		fmt.Printf("%s│%s %-12s: %s%-38s %s│%s\n", c(cyan), c(bold)+c(white), e[0], c(green), e[1], c(cyan), c(reset))
 	}
 	fmt.Println(c(cyan) + "└" + line + "┘" + c(reset))
 	if projInfo.Rules != "" {
-		fmt.Printf("%s📌 Loaded Project Rules from .nooty/rules.md%s\n", c(yellow), c(reset))
+		fmt.Printf("%s📌 Project rules loaded from .nooty/rules.md%s\n", c(yellow), c(reset))
 	}
-	fmt.Printf("%s💡 Type %s/help%s for commands, %s/undo%s to revert changes.%s\n\n", c(dim), c(bold)+c(green), c(dim), c(bold)+c(cyan), c(dim), c(reset))
+	fmt.Printf("%s💡 /help  /undo  /changes  /review  /test  /context%s\n\n", c(dim), c(reset))
 }
 
-func formatPath(path string) string {
-	if strings.HasPrefix(path, homeDir) {
-		return "~" + strings.TrimPrefix(path, homeDir)
+func formatPath(p string) string {
+	if strings.HasPrefix(p, homeDir) {
+		return "~" + strings.TrimPrefix(p, homeDir)
 	}
-	return path
+	return p
 }
-
-func centerText(text string, width int) string {
-	if len(text) >= width {
-		return text[:width]
+func centerText(s string, w int) string {
+	if len(s) >= w {
+		return s[:w]
 	}
-	left := (width - len(text)) / 2
-	right := width - len(text) - left
-	return strings.Repeat(" ", left) + text + strings.Repeat(" ", right)
+	l := (w - len(s)) / 2
+	return strings.Repeat(" ", l) + s + strings.Repeat(" ", w-l-len(s))
 }
-
-func truncateString(s string, max int) string {
-	if len(s) <= max {
+func truncateString(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
 		return s
 	}
-	return "..." + s[len(s)-max+3:]
+	if n <= 3 {
+		return s[:n]
+	}
+	return "..." + s[len(s)-n+3:]
 }
-
-func maskAPIKey(key string) string {
-	if key == "" {
+func maskAPIKey(k string) string {
+	if k == "" {
 		return "(not configured)"
 	}
-	if len(key) <= 8 {
-		return key[:1] + strings.Repeat("*", len(key)-1)
+	if len(k) <= 8 {
+		return k[:1] + strings.Repeat("*", len(k)-1)
 	}
-	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
+	return k[:4] + strings.Repeat("*", len(k)-8) + k[len(k)-4:]
 }
+func exists(p string) bool { _, e := os.Stat(p); return e == nil }
 
-// ---------- Project Detection & Rules ----------
 func detectProject(dir string) ProjectInfo {
-	info := ProjectInfo{Type: "Generic Codebase", TestCommand: "", IsGit: false}
-
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		info.IsGit = true
+	p := ProjectInfo{Type: "Generic Codebase"}
+	if exists(filepath.Join(dir, ".git")) {
+		p.IsGit = true
 	}
-
-	files, _ := os.ReadDir(dir)
-	info.FilesCount = len(files)
-
-	if exists(filepath.Join(dir, "go.mod")) {
-		info.Type = "Go Modules"
-		info.TestCommand = "go test ./..."
-	} else if exists(filepath.Join(dir, "package.json")) {
-		info.Type = "Node.js"
-		info.TestCommand = "npm test"
-	} else if exists(filepath.Join(dir, "pyproject.toml")) || exists(filepath.Join(dir, "requirements.txt")) {
-		info.Type = "Python"
-		info.TestCommand = "pytest"
-	} else if exists(filepath.Join(dir, "Cargo.toml")) {
-		info.Type = "Rust Cargo"
-		info.TestCommand = "cargo test"
-	} else if exists(filepath.Join(dir, "composer.json")) {
-		info.Type = "PHP Composer"
-		info.TestCommand = "vendor/bin/phpunit"
-	} else if exists(filepath.Join(dir, "pom.xml")) || exists(filepath.Join(dir, "build.gradle")) {
-		info.Type = "Java Project"
-		info.TestCommand = "mvn test"
+	if entries, e := os.ReadDir(dir); e == nil {
+		p.FilesCount = len(entries)
 	}
-
-	rulesPath := filepath.Join(dir, ".nooty", "rules.md")
-	if data, err := os.ReadFile(rulesPath); err == nil {
-		info.Rules = strings.TrimSpace(string(data))
+	switch {
+	case exists(filepath.Join(dir, "go.mod")):
+		p.Type = "Go Modules"
+		p.TestCommand = "go test ./..."
+	case exists(filepath.Join(dir, "package.json")):
+		p.Type = "Node.js"
+		p.TestCommand = "npm test"
+	case exists(filepath.Join(dir, "pyproject.toml")) || exists(filepath.Join(dir, "requirements.txt")):
+		p.Type = "Python"
+		p.TestCommand = "pytest"
+	case exists(filepath.Join(dir, "Cargo.toml")):
+		p.Type = "Rust Cargo"
+		p.TestCommand = "cargo test"
+	case exists(filepath.Join(dir, "composer.json")):
+		p.Type = "PHP Composer"
+		p.TestCommand = "vendor/bin/phpunit"
+	case exists(filepath.Join(dir, "pom.xml")) || exists(filepath.Join(dir, "build.gradle")):
+		p.Type = "Java Project"
+		p.TestCommand = "mvn test"
 	}
-
-	return info
+	if b, e := os.ReadFile(filepath.Join(dir, ".nooty", "rules.md")); e == nil {
+		p.Rules = strings.TrimSpace(string(b))
+	}
+	return p
 }
 
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func runInit() {
-	_ = os.MkdirAll(projectNootyDir, 0700)
-	rulesPath := filepath.Join(projectNootyDir, "rules.md")
-	if !exists(rulesPath) {
-		sampleRules := `# NootyCLI Project Rules
-- Maintain code quality and clean architecture.
-- Write unit tests for new functions.
-- Do not modify database migrations automatically.
-- Prefer error returning over panicking.
-`
-		_ = os.WriteFile(rulesPath, []byte(sampleRules), 0644)
-		fmt.Printf("%s✅ Created %s%s\n", c(green), rulesPath, c(reset))
-	} else {
-		fmt.Printf("%sℹ️ .nooty/rules.md already exists.%s\n", c(yellow), c(reset))
-	}
-
-	contextPath := filepath.Join(projectNootyDir, "context.json")
-	if !exists(contextPath) {
-		_ = os.WriteFile(contextPath, []byte("{\n  \"project_notes\": \"\"\n}\n"), 0644)
-	}
-
-	fmt.Printf("%s🚀 Nooty Workspace initialized successfully for: %s%s\n", c(bold)+c(cyan), workspace, c(reset))
-}
-
-// ---------- Interactive REPL Engine ----------
 func repl() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -394,7 +285,6 @@ func repl() {
 		if line == "" {
 			continue
 		}
-
 		if strings.HasPrefix(line, "/") {
 			handleSlashCommand(line)
 		} else if strings.HasPrefix(line, "!") && currentMode == "cli" {
@@ -403,9 +293,8 @@ func repl() {
 			handleChat(line)
 		}
 	}
-	fmt.Println(c(dim) + "\n👋 NootyCLI session ended. Goodbye!" + c(reset))
+	fmt.Println(c(dim) + "\n👋 NootyCLI session ended." + c(reset))
 }
-
 func prompt() string {
 	if currentMode == "cli" {
 		return c(bold) + c(cyan) + "🤖 nooty[agent]" + c(yellow) + " ❯ " + c(reset)
@@ -413,28 +302,25 @@ func prompt() string {
 	return c(bold) + c(green) + "⚡ nooty" + c(white) + " ❯ " + c(reset)
 }
 
-// ---------- Command Dispatcher ----------
 func handleSlashCommand(cmd string) {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	p := strings.Fields(cmd)
+	if len(p) == 0 {
 		return
 	}
-
-	switch parts[0] {
+	switch p[0] {
 	case "/help":
 		printHelp()
 	case "/mode":
-		if len(parts) > 1 && parts[1] == "cli" {
+		if len(p) > 1 && p[1] == "cli" {
 			currentMode = "cli"
-			fmt.Println(c(green) + "🛠 Switched to Agent Mode (Autonomous Execution)." + c(reset))
 		} else {
 			currentMode = "chat"
-			fmt.Println(c(green) + "💬 Switched to Conversational Chat Mode." + c(reset))
 		}
+		fmt.Println("✅ Mode: " + currentMode)
 	case "/workspace":
-		handleWorkspace(parts[1:])
+		handleWorkspace(p[1:])
 	case "/model":
-		handleModelCommand(parts[1:])
+		handleModelCommand(p[1:])
 	case "/config":
 		handleConfig()
 	case "/dns":
@@ -454,413 +340,294 @@ func handleSlashCommand(cmd string) {
 	case "/context":
 		showContextBudget()
 	case "/memory":
-		handleMemory(parts[1:])
+		handleMemory(p[1:])
 	case "/safety":
-		handleSafety(parts[1:])
+		handleSafety(p[1:])
 	case "/history":
 		showHistory()
 	case "/git":
-		handleGitCommand(parts[1:])
+		handleGitCommand(p[1:])
 	case "/commit":
 		runAutoCommit()
 	case "/clear":
 		sessionMessages = nil
-		if runtime.GOOS == "windows" {
-			cmd := exec.Command("cmd", "/c", "cls")
-			cmd.Stdout = os.Stdout
-			_ = cmd.Run()
-		} else {
-			fmt.Print("\033[H\033[2J")
-		}
+		clearScreen()
 		drawHeader()
-		fmt.Println(c(green) + "✨ Session history & screen cleared." + c(reset))
 	case "/exit":
 		os.Exit(0)
 	default:
-		fmt.Printf("❌ Unknown command: %s. Type /help for assistance.\n", parts[0])
+		fmt.Printf("❌ Unknown command: %s. Type /help.\n", p[0])
 	}
 }
 
 func printHelp() {
 	fmt.Println(c(bold) + "\n📌 NootyCLI v0.3 Command Reference:" + c(reset))
 	fmt.Println(`
-  /help                        Show command help overview
-  /mode [chat|cli]             Toggle Chat or Autonomous Agent Mode
-  /undo                        Revert last file modification via snapshot
-  /changes                     List recent file snapshot changes
-  /init                        Initialize .nooty project rules and setup
-  /review                      Perform AI Code Review on git diff
-  /test                        Run auto-detected unit test suite
-  /context                     Display current context window token usage
-  /commit                      Generate intelligent AI git commit message
-  /git <status|diff|log>       Execute git helper commands
-  /config                      Configuration wizard for API key & endpoint
-  /workspace show|set <path>   Manage current working directory
-  /model show|set|list         View, switch, or browse AI models
-  /dns                         Display Anti-Sanction Smart DNS status
-  /doctor                      Run diagnostic check on connection & API
-  /memory list|add|forget      Manage long-term persistent context
-  /safety strict|balanced|auto Set safety confirmation level
-  /clear                       Reset screen & session memory
-  /exit                        Terminate session`)
+  /help
+  /mode [chat|cli]
+  /init
+  /undo | /revert
+  /changes
+  /review
+  /test
+  /context
+  /commit
+  /git <status|diff|log|branch>
+  /config
+  /workspace show|set <path>
+  /model show|set <name>|list
+  /dns
+  /doctor
+  /memory list|add|forget
+  /safety strict|balanced|auto
+  /history
+  /clear
+  /exit
+
+  In Agent Mode: !<shell-command>`)
+}
+func clearScreen() {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("cmd", "/c", "cls")
+		cmd.Stdout = os.Stdout
+		_ = cmd.Run()
+	} else {
+		fmt.Print("\033[H\033[2J")
+	}
 }
 
 func handleConfig() {
-	fmt.Println(c(bold) + "\n⚙️ Nooty Configuration Wizard" + c(reset))
-	fmt.Println("Press Enter to keep existing settings.\n")
-	reader := bufio.NewReader(os.Stdin)
-
+	r := bufio.NewReader(os.Stdin)
+	fmt.Println("\n⚙️ Nooty Configuration")
 	fmt.Printf("Provider endpoint [%s]: ", config.ProviderEndpoint)
-	ep, _ := reader.ReadString('\n')
-	ep = strings.TrimSpace(ep)
-	if ep != "" {
-		config.ProviderEndpoint = ep
+	if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
+		config.ProviderEndpoint = strings.TrimSpace(v)
 	}
-
 	fmt.Printf("API key [%s]: ", maskAPIKey(config.APIKey))
-	key, _ := reader.ReadString('\n')
-	key = strings.TrimSpace(key)
-	if key != "" {
-		config.APIKey Agent Mode
-  /undo                        Revert last file modification via snapshot
-  /changes                     List recent file snapshot changes
-  /init                        Initialize .nooty project rules and setup
-  /review                      Perform AI Code Review on git diff
-  /test                        Run auto-detected unit test suite
-  /context                     Display current context window token usage
-  /commit                      Generate intelligent AI git commit message
-  /git <status|diff|log>       Execute git helper commands
-  /config                      Configuration wizard for API key & endpoint
-  /workspace show|set <path>   Manage current working directory
-  /model show|set|list         View, switch, or browse AI models
-  /dns                         Display Anti-Sanction Smart DNS status
-  /doctor                      Run diagnostic check on connection & API
-  /memory list|add|forget      Manage long-term persistent context
-  /safety strict|balanced|auto Set safety confirmation level
-  /clear                       Reset screen & session memory
-  /exit                        Terminate session`)
-}
-
-func handleConfig() {
-	fmt.Println(c(bold) + "\n⚙️ Nooty Configuration Wizard" + c(reset))
-	fmt.Println("Press Enter to keep existing settings.\n")
-	reader := bufio.NewReader(os.Stdin)
-
-	fmt.Printf("Provider endpoint [%s]: ", config.ProviderEndpoint)
-	ep, _ := reader.ReadString('\n')
-	ep = strings.TrimSpace(ep)
-	if ep != "" {
-		config.ProviderEndpoint = ep
+	if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
+		config.APIKey = strings.TrimSpace(v)
 	}
-
-	fmt.Printf("API key [%s]: ", maskAPIKey(config.APIKey))
-	key, _ := reader.ReadString('\n')
-	key = strings.TrimSpace(key)
-	if key != "" {
-		config.APIKey = key
-	}
-
 	fmt.Printf("Model [%s]: ", config.Model)
-	mod, _ := reader.ReadString('\n')
-	mod = strings.TrimSpace(mod)
-	if modlist":
+	if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
+		config.Model = strings.TrimSpace(v)
+	}
+	saveConfig()
+	fmt.Println("✅ Configuration saved.")
+}
+
+func handleModelCommand(args []string) {
+	if len(args) == 0 || args[0] == "show" {
+		fmt.Printf("🤖 Active Model: %s\n", config.Model)
+		return
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			fmt.Println("Usage: /model set <name>")
+			return
+		}
+		config.Model = args[1]
+		saveConfig()
+		fmt.Println("✅ Model: " + config.Model)
+	case "list":
 		selectModelInteractive()
 	default:
-		fmt.Println("❌ Unknown subcommand. Use: show | set | list")
+		fmt.Println("Usage: /model show|set|list")
 	}
 }
-
 func selectModelInteractive() {
-	fmt.Println("🔍 Fetching available models...")
-	models, err := fetchAvailableModels()
-	if err != nil {
-		fmt.Printf("%s❌ Model list error: %v%s\n", c(red), err, c(reset))
+	fmt.Println("🔍 Fetching models...")
+	models, e := fetchAvailableModels()
+	if e != nil {
+		fmt.Println("❌", e)
 		return
 	}
-	if len(models) == 0 {
-		fmt.Println("⚠️ Provider returned zero models.")
+	sort.Strings(models)
+	for i, m := range models {
+		fmt.Printf("[%d] %s\n", i+1, m)
+	}
+	fmt.Print("Select number (q=quit): ")
+	r := bufio.NewReader(os.Stdin)
+	v, _ := r.ReadString('\n')
+	v = strings.TrimSpace(v)
+	if v == "q" {
 		return
 	}
+	n, e := strconv.Atoi(v)
+	if e != nil || n < 1 || n > len(models) {
+		fmt.Println("❌ Invalid selection")
+		return
+	}
+	config.Model = models[n-1]
+	saveConfig()
+	fmt.Println("✅ Model set to:", config.Model)
+}
 
-	pageSize := 15
-	totalPages := (len(models) + pageSize - 1) / pageSize
-	page := 0
-
-	for {
-		fmt.Printf("\n%s📋 Available Provider Models (Page %d/%d):%s\n", c(bold), page+1, totalPages)
-		start := page * pageSize
-		end := start + pageSize
-		if end > len(models) {
-			end = len(models)
+func showDNSStatus() {
+	fmt.Println(c(bold) + "\n🛡️ DNS Fallback Chain:" + c(reset))
+	for i, d := range fallbackDNS {
+		a := "System Default"
+		if d.Address != "" {
+			a = d.Address
 		}
-
-		for i, m := range models[start:end] {
-			fmt.Printf("  %s[%2d]%s %s\n", c(bold)+c(cyan), start+i+1, c(reset), m)
+		mark := ""
+		if d.Name == activeDNSName {
+			mark = " [ACTIVE]"
 		}
-
-		fmt.Print("\nSelect number, [n]ext, [p]rev, or [q]uit: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
-
-		switch input {
-		case "q":
-			return
-		case "n":
-			if page < totalPages-1 {
-				page++
-			}
-		case "p":
-			if page > 0 {
-				page--
-			}
-		default:
-			num, err := strconv.Atoi(input)
-			if err != nil || num < 1 || num > len(models) {
-				fmt.Println("❌ Invalid selection.")
-				continue
-			}
-			selected := models[num-1]
-			config.Model = selected
-			saveConfig()
-			fmt.Printf("%s✅ Active Model updated to: %s%s\n", c(green), selected, c(reset))
-			return
-		}
+		fmt.Printf("%d. %-24s %s%s\n", i+1, d.Name, a, mark)
 	}
 }
 
-// ---------- Network Transport Engine ----------
-func dnsDialer(dnsServer string) func(ctx context.Context, network, address string) (net.Conn, error) {
+func dnsDialer(server string) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		d := net.Dialer{}
-		return d.DialContext(ctx, network, dnsServer+":53")
+		return d.DialContext(ctx, network, server+":53")
 	}
 }
-
 func httpClientForDNS(dns string) *http.Client {
 	if dns == "" {
 		return &http.Client{Timeout: 40 * time.Second}
 	}
-	resolver := &net.Resolver{
-		PreferGo: true,
-		Dial:     dnsDialer(dns),
-	}
-	dialer := &net.Dialer{Resolver: resolver}
-	return &http.Client{
-		Transport: &http.Transport{DialContext: dialer.DialContext},
-		Timeout:   40 * time.Second,
-	}
+	resolver := &net.Resolver{PreferGo: true, Dial: dnsDialer(dns)}
+	d := &net.Dialer{Resolver: resolver}
+	return &http.Client{Transport: &http.Transport{DialContext: d.DialContext}, Timeout: 40 * time.Second}
 }
-
 func doWithFallback(method, url string, body []byte, headers map[string]string) (*http.Response, error) {
-	for i, dnsResolver := range fallbackDNS {
-		client := httpClientForDNS(dnsResolver.Address)
+	var lastErr error
+	for i, d := range fallbackDNS {
+		client := httpClientForDNS(d.Address)
 		var req *http.Request
-		var err error
-
+		var e error
 		if body != nil {
-			req, err = http.NewRequest(method, url, bytes.NewBuffer(body))
+			req, e = http.NewRequest(method, url, bytes.NewReader(body))
 		} else {
-			req, err = http.NewRequest(method, url, nil)
+			req, e = http.NewRequest(method, url, nil)
 		}
-		if err != nil {
-			return nil, err
+		if e != nil {
+			return nil, e
 		}
-
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-
-		resp, err := client.Do(req)
-		if err == nil && resp.StatusCode != 403 && resp.StatusCode != 451 {
-			activeDNSName = dnsResolver.Name
+		resp, e := client.Do(req)
+		if e == nil && resp.StatusCode != 403 && resp.StatusCode != 451 {
+			activeDNSName = d.Name
 			return resp, nil
-		}
-
-		if i < len(fallbackDNS)-1 {
-			fmt.Printf("%s⚠️ Direct connection/DNS blocked (%s). Bypassing via %s...%s\n",
-				c(yellow), dnsResolver.Name, fallbackDNS[i+1].Name, c(reset))
 		}
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
+		if e != nil {
+			lastErr = e
+		}
+		if i < len(fallbackDNS)-1 {
+			fmt.Printf("%s⚠️ Network failed via %s → trying %s%s\n", c(yellow), d.Name, fallbackDNS[i+1].Name, c(reset))
+		}
 	}
-	return nil, fmt.Errorf("network connection failed: all anti-sanction resolvers exhausted")
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("all DNS resolvers exhausted")
 }
 
 func fetchAvailableModels() ([]string, error) {
 	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/models"
-	headers := map[string]string{}
+	h := map[string]string{}
 	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
+		h["Authorization"] = "Bearer " + config.APIKey
 	}
-
-	resp, err := doWithFallback("GET", endpoint, nil, headers)
-	if err != nil {
-		return nil, err
+	resp, e := doWithFallback("GET", endpoint, nil, h)
+	if e != nil {
+		return nil, e
 	}
 	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
+	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
 	}
-
-	var result struct {
+	var r struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse models payload")
+	if e = json.Unmarshal(b, &r); e != nil {
+		return nil, e
 	}
-
-	var models []string
-	for _, d := range result.Data {
-		models = append(models, d.ID)
+	out := make([]string, 0, len(r.Data))
+	for _, m := range r.Data {
+		out = append(out, m.ID)
 	}
-	return models, nil
+	return out, nil
 }
 
-// ---------- Chat Execution & Context Budget ----------
 func handleChat(input string) {
-	messages := buildMessages(input)
+	m := buildMessages(input)
 	if currentMode == "cli" {
-		runAgentLoop(messages)
-		return
+		runAgentLoop(m)
+	} else {
+		streamResponse(m)
 	}
-	streamResponse(messages)
 }
-
 func buildMessages(userInput string) []Message {
-	var msgs []Message
-	sysPrompt := `You are NootyCLI v0.3, an autonomous agentic code AI workspace assistant.
-
-When in CHAT mode: Provide concise, expert engineering guidance.
-
-When in CLI mode: You act as an autonomous workspace code agent.
-To execute tools, reply STRICTLY using this exact syntax:
-TOOL: tool_name key1="value1" key2="value2"
-
-Available Workspace Tools:
-- read_file (path="relative_path")
-- write_file (path="relative_path", content="full_content")
-- apply_patch (path="relative_path", patch="search_replace_block")
-  Notice for apply_patch: Format patch argument strictly as:
-  <<<<<<< SEARCH
-  original lines to find
-  =======
-  replacement lines
-  >>>>>>> REPLACE
-- delete_file (path="relative_path")
-- list_files (path="relative_path")
-- search_files (pattern="filename_or_ext")
-- search_code (query="text", path="relative_path")
-- find_symbol (name="func_or_var_name")
-- file_info (path="relative_path")
-- tree (path="relative_path")
-- git_status
-- git_diff
-- git_log (count="5")
-- git_branch
-- run_command (command="shell_cmd", timeout="60")
-- run_test (scope="optional_pkg")
-- run_linter
-- project_info
-- env_info
-
-IMPORTANT: Use EXACT tool format. Issue only ONE tool call per interaction step.`
-
+	sys := `You are NootyCLI v0.3, an autonomous code agent. In chat mode answer as a concise senior engineer. In CLI mode inspect, edit, test, and verify the workspace. To call exactly one tool, output one line in this exact form: TOOL: tool_name key="value". Tools: read_file, write_file, apply_patch, delete_file, list_files, search_files, search_code, find_symbol, file_info, tree, git_status, git_diff, git_log, git_branch, run_command, run_test, run_linter, project_info, env_info. apply_patch uses <<<<<<< SEARCH / ======= / >>>>>>> REPLACE blocks. Never invent a tool.`
 	if projInfo.Rules != "" {
-		sysPrompt += "\n\nProject Specific Rules (.nooty/rules.md):\n" + projInfo.Rules
+		sys += "\nProject Rules:\n" + projInfo.Rules
 	}
-
-	relevant := getRelevantMemories(userInput)
-	if len(relevant) > 0 {
-		sysPrompt += "\n\nUser Persistent Context:\n"
-		for _, m := range relevant {
-			sysPrompt += fmt.Sprintf("- [%s] %s\n", m.Tag, m.Content)
-		}
-	}
-
-	msgs = append(msgs, Message{Role: "system", Content: sysPrompt})
-
-	histLimit := 12
+	msgs := []Message{{Role: "system", Content: sys}}
 	start := 0
-	if len(sessionMessages) > histLimit {
-		start = len(sessionMessages) - histLimit
+	if len(sessionMessages) > 12 {
+		start = len(sessionMessages) - 12
 	}
 	msgs = append(msgs, sessionMessages[start:]...)
-
-	userMsg := Message{Role: "user", Content: userInput}
-	msgs = append(msgs, userMsg)
-	sessionMessages = append(sessionMessages, userMsg)
-
+	u := Message{Role: "user", Content: userInput}
+	msgs = append(msgs, u)
+	sessionMessages = append(sessionMessages, u)
 	return msgs
 }
-
-func getRelevantMemories(query string) []Memory {
-	q := strings.ToLower(query)
-	var res []Memory
+func getRelevantMemories(q string) []Memory {
+	q = strings.ToLower(q)
+	var out []Memory
 	for _, m := range memories {
 		if strings.Contains(strings.ToLower(m.Content), q) || strings.Contains(strings.ToLower(m.Tag), q) {
-			res = append(res, m)
+			out = append(out, m)
 		}
 	}
-	if len(res) > 5 {
-		res = res[:5]
+	if len(out) > 5 {
+		out = out[:5]
 	}
-	return res
+	return out
 }
-
 func showContextBudget() {
-	sysLen := 1800
-	projLen := len(projInfo.Rules)
-	histLen := 0
+	n := 1800 + len(projInfo.Rules)
 	for _, m := range sessionMessages {
-		histLen += len(m.Content)
+		n += len(m.Content)
 	}
-
-	estTokens := (sysLen + projLen + histLen) / 4
-
-	fmt.Println(c(bold) + "\n📊 Context Window Token Usage Estimate:" + c(reset))
-	fmt.Printf("  • System Prompt & Tools : ~%d tokens\n", sysLen/4)
-	fmt.Printf("  • Project Rules         : ~%d tokens\n", projLen/4)
-	fmt.Printf("  • Conversation History  : ~%d tokens (%d msgs)\n", histLen/4, len(sessionMessages))
-	fmt.Printf("  ---------------------------------------\n")
-	fmt.Printf("  %s• Total Estimated Usage : ~%d tokens%s\n\n", c(bold)+c(cyan), estTokens, c(reset))
+	fmt.Printf("\n📊 Estimated context: ~%d tokens (%d messages)\n", n/4, len(sessionMessages))
 }
 
 func streamResponse(messages []Message) {
-	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: true}
-	jsonData, _ := json.Marshal(reqPayload)
-	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
-	headers := map[string]string{"Content-Type": "application/json"}
+	payload, _ := json.Marshal(ChatRequest{Model: config.Model, Messages: messages, Stream: true})
+	h := map[string]string{"Content-Type": "application/json"}
 	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
+		h["Authorization"] = "Bearer " + config.APIKey
 	}
-
-	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
-	if err != nil {
-		fmt.Printf("%s❌ Request error: %v%s\n", c(red), err, c(reset))
+	resp, e := doWithFallback("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", payload, h)
+	if e != nil {
+		fmt.Println("❌", e)
 		return
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("%s❌ Provider Error %d: %s%s\n", c(red), resp.StatusCode, string(body), c(reset))
+		b, _ := io.ReadAll(resp.Body)
+		fmt.Printf("❌ Provider Error %d: %s\n", resp.StatusCode, b)
 		return
 	}
-
-	reader := bufio.NewReader(resp.Body)
-	var fullContent strings.Builder
+	r := bufio.NewReader(resp.Body)
+	var full strings.Builder
 	fmt.Print(c(cyan))
-
 	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
+		line, e := r.ReadString('\n')
+		if e != nil {
 			break
 		}
 		line = strings.TrimSpace(line)
@@ -871,259 +638,178 @@ func streamResponse(messages []Message) {
 		if data == "[DONE]" {
 			break
 		}
-
-		var chunk ChatStreamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
-			for _, choice := range chunk.Choices {
-				fmt.Print(choice.Delta.Content)
-				fullContent.WriteString(choice.Delta.Content)
+		var ch ChatStreamChunk
+		if json.Unmarshal([]byte(data), &ch) == nil {
+			for _, x := range ch.Choices {
+				fmt.Print(x.Delta.Content)
+				full.WriteString(x.Delta.Content)
 			}
 		}
 	}
-
 	fmt.Print(c(reset) + "\n\n")
-	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fullContent.String()})
+	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: full.String()})
 }
 
-// ---------- Agentic Plan & Execute & Verify Loop ----------
-func runAgentLoop(messages []Message) {
-	planPrompt := append(messages, Message{Role: "user", Content: "Provide a concise execution plan with step-by-step tool actions to fulfill this task."})
-	fmt.Print(c(yellow) + "🤔 Analyzing workspace & planning action graph... " + c(reset))
+func getModelResponseText(messages []Message) (string, error) {
+	payload, _ := json.Marshal(ChatRequest{Model: config.Model, Messages: messages, Stream: false})
+	h := map[string]string{"Content-Type": "application/json"}
+	if config.APIKey != "" {
+		h["Authorization"] = "Bearer " + config.APIKey
+	}
+	resp, e := doWithFallback("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", payload, h)
+	if e != nil {
+		return "", e
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	var r struct {
+		Choices []struct {
+			Message Message `json:"message"`
+		} `json:"choices"`
+	}
+	if e = json.Unmarshal(b, &r); e != nil {
+		return "", e
+	}
+	if len(r.Choices) == 0 {
+		return "", fmt.Errorf("empty choices")
+	}
+	return r.Choices[0].Message.Content, nil
+}
 
-	planText, err := getModelResponseText(planPrompt)
-	if err != nil {
-		fmt.Printf("%s❌ Planning failed: %v%s\n", c(red), err, c(reset))
+func runAgentLoop(messages []Message) {
+	planMsgs := append(append([]Message{}, messages...), Message{Role: "user", Content: "Create a concise numbered execution plan. Do not execute tools yet."})
+	fmt.Print(c(yellow) + "🤔 Planning... " + c(reset))
+	plan, e := getModelResponseText(planMsgs)
+	if e != nil {
+		fmt.Println("❌", e)
 		return
 	}
-
-	fmt.Println("\n" + c(cyan) + c(bold) + "📋 Proposed Action Graph:" + c(reset))
-	fmt.Println(c(cyan) + planText + c(reset) + "\n")
-
-	if config.Safety != "auto" {
-		fmt.Print(c(bold) + "Approve execution plan? [Y/n]: " + c(reset))
-		reader := bufio.NewReader(os.Stdin)
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
-		if confirm == "n" || confirm == "no" {
-			fmt.Println("🛑 Execution cancelled by user.")
-			return
-		}
+	fmt.Println("\n" + c(cyan) + "📋 Plan:" + c(reset) + "\n" + plan + "\n")
+	if config.Safety != "auto" && !confirm("Approve plan? [Y/n]: ") {
+		fmt.Println("🛑 Cancelled.")
+		return
 	}
-
-	msgs := append(messages,
-		Message{Role: "assistant", Content: planText},
-		Message{Role: "user", Content: "Plan approved. Proceed step by step using TOOL commands."},
-	)
-
-	maxSteps := 12
-	executedSteps := 0
-
-	for i := 0; i < maxSteps; i++ {
-		executedSteps++
-		respText, err := getModelResponseText(msgs)
-		if err != nil {
-			fmt.Printf("%s❌ Agent Execution Error: %v%s\n", c(red), err, c(reset))
+	msgs := append(append([]Message{}, messages...), Message{Role: "assistant", Content: plan}, Message{Role: "user", Content: "Plan approved. Execute step by step with one TOOL call at a time. After changes, run tests and verify."})
+	for i := 0; i < 12; i++ {
+		text, e := getModelResponseText(msgs)
+		if e != nil {
+			fmt.Println("❌", e)
 			return
 		}
-
-		toolCall := extractToolCall(respText)
-		if toolCall == nil {
-			fmt.Println("\n" + c(green) + respText + c(reset) + "\n")
-			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: respText})
-
-			// Agent Verification Step
-			runVerificationStep(msgs)
+		tc := extractToolCall(text)
+		if tc == nil {
+			fmt.Println("\n" + c(green) + text + c(reset))
+			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: text})
 			return
 		}
-
-		fmt.Printf("\n%s🔧 Agent Action [%d]: %s%s\n", c(bold)+c(yellow), i+1, toolCall.Name, c(reset))
-		for k, v := range toolCall.Args {
-			fmt.Printf("   %s%s%s: %s\n", c(dim), k, c(reset), truncateString(v, 60))
-		}
-
-		toolResult, approved := executeAgentTool(toolCall)
-		if !approved {
-			msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: "Action denied by safety policy."})
+		fmt.Printf("\n%s🔧 Action %d: %s%s\n", c(yellow), i+1, tc.Name, c(reset))
+		res, ok := executeAgentTool(tc)
+		if !ok {
+			msgs = append(msgs, Message{Role: "user", Content: "Action denied."})
 			continue
 		}
-
-		// Smart Tool Output Summarization
-		if len(toolResult) > 2500 {
-			toolResult = summarizeToolOutput(toolResult)
+		if len(res) > 2500 {
+			res = summarizeToolOutput(res)
 		}
-
-		fmt.Printf("%s📄 Tool Output:%s\n%s\n", c(dim), c(reset), toolResult)
-		msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: fmt.Sprintf("Tool '%s' output:\n%s", toolCall.Name, toolResult)})
+		fmt.Println(res)
+		msgs = append(msgs, Message{Role: "assistant", Content: text}, Message{Role: "user", Content: "Tool output:\n" + res})
 	}
-
-	fmt.Printf("%s⚠️ Agent loop max step limit reached (%d steps).%s\n", c(yellow), maxSteps, c(reset))
+	fmt.Println(c(yellow) + "⚠️ Agent step limit reached." + c(reset))
 }
-
-func runVerificationStep(history []Message) {
-	if projInfo.TestCommand != "" {
-		fmt.Printf("%s🧪 Running automatic project verification check (%s)...%s\n", c(bold)+c(cyan), projInfo.TestCommand, c(reset))
-		out, err := executeShellCommand(projInfo.TestCommand, 45)
-		if err == nil && !strings.Contains(out, "FAIL") {
-			fmt.Printf("%s✅ Verification Passed: Project tests running cleanly.%s\n", c(green), c(reset))
-		} else {
-			fmt.Printf("%s⚠️ Verification Note: Test suite execution reported issues.\n%s%s\n", c(yellow), truncateString(out, 300), c(reset))
-		}
+func confirm(prompt string) bool {
+	fmt.Print(prompt)
+	r := bufio.NewReader(os.Stdin)
+	v, _ := r.ReadString('\n')
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v == "" || v == "y" || v == "yes"
+}
+func summarizeToolOutput(s string) string {
+	if len(s) <= 2500 {
+		return s
 	}
-}
-
-func summarizeToolOutput(output string) string {
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(s, "\n")
 	if len(lines) <= 40 {
-		return output[:2400] + "\n... (output truncated)"
+		return truncateString(s, 2400) + "\n... (output truncated)"
 	}
-	head := strings.Join(lines[:25], "\n
-		}
-
-		// Smart Tool Output Summarization
-		if len(toolResult) > 2500 {
-			toolResult = summarizeToolOutput(toolResult)
-		}
-
-		fmt.Printf("%s📄 Tool Output:%s\n%s\n", c(dim), c(reset), toolResult)
-		msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: fmt.Sprintf("Tool '%s' output:\n%s", toolCall.Name, toolResult)})
-	}
-
-	fmt.Printf("%s⚠️ Agent loop max step limit reached (%d steps).%s\n", c(yellow), maxSteps, c(reset))
+	return strings.Join(lines[:25], "\n") + fmt.Sprintf("\n\n... [%d lines omitted] ...\n\n", len(lines)-40) + strings.Join(lines[len(lines)-15:], "\n")
 }
 
-func runVerificationStep(history []Message) {
-	if projInfo.TestCommand != "" {
-		fmt.Printf("%s🧪 Running automatic project verification check (%s)...%s\n", c(bold)+c(cyan), projInfo.TestCommand, c(reset))
-		out, err := executeShellCommand(projInfo.TestCommand, 45)
-		if err == nil && !strings.Contains(out, "FAIL") {
-			fmt.Printf("%s✅ Verification Passed: Project tests running cleanly.%s\n", c(green), c(reset))
-		} else {
-			fmt.Printf("%s⚠️ Verification Note: Test suite execution reported issues.\n%s%s\n", c(yellow), truncateString(out, 300), c(reset))
-		}
-	}
-}
-
-func summarizeToolOutput(output string) string {
-	lines := strings.Split(output, "\n")
-	if len(lines) <= 40 {
-		return output[:2400] + "\n... (output truncated)"
-	}
-	head := strings.Join(lines[:25], "\n")
-	tail := strings.Join(lines[len(lines)-15:], "\n")
-	return fmt.Sprintf("%s\n\n... [%d lines truncated by Smart Summarizer] ...\n\n%s", head, len(lines)-40, tail)
-}
-
-func getModelResponseText(messages []Message) (string, error) {") {
+func extractToolCall(text string) *ToolCall {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "TOOL:") {
 			return parseToolLine(line)
 		}
 	}
-
-	re := regexp.MustCompile(`(?i)TOOL:\s*(\w+)\s+(.*)`)
-	matches := re.FindStringSubmatch(text)
-	if len(matches) >= 3 {
-		return parseToolArgs(matches[1], matches[2])
-	}
 	return nil
 }
-
 func parseToolLine(line string) *ToolCall {
-	line = strings.TrimPrefix(line, "TOOL:")
-	line = strings.TrimPrefix(line, "TOOL：")
-	line = strings.TrimSpace(line)
-
+	line = strings.TrimSpace(strings.TrimPrefix(line, "TOOL:"))
 	parts := strings.SplitN(line, " ", 2)
-	if len(parts) < 1 {
-		return nil
-	}
 	name := parts[0]
-	argsStr := ""
+	args := ""
 	if len(parts) > 1 {
-		argsStr = parts[1]
+		args = parts[1]
 	}
-	return parseToolArgs(name, argsStr)
+	return parseToolArgs(name, args)
 }
-
-func parseToolArgs(name, argsStr string) *ToolCall {
+func parseToolArgs(name, s string) *ToolCall {
 	args := map[string]string{}
 	re := regexp.MustCompile(`(\w+)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)`)
-	matches := re.FindAllStringSubmatch(argsStr, -1)
-
-	for _, match := range matches {
-		if len(match) == 3 {
-			key := match[1]
-			val := match[2]
-			if (strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`)) || (strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
-				val = val[1 : len(val)-1]
-			}
-			val = strings.ReplaceAll(val, "\\n", "\n")
-			val = strings.ReplaceAll(val, "\\t", "\t")
-			args[key] = val
+	for _, m := range re.FindAllStringSubmatch(s, -1) {
+		v := m[2]
+		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+			v = v[1 : len(v)-1]
 		}
+		v = strings.ReplaceAll(v, "\\n", "\n")
+		v = strings.ReplaceAll(v, "\\t", "\t")
+		args[m[1]] = v
 	}
-
-	if len(args) == 0 && strings.TrimSpace(argsStr) != "" {
-		args["path"] = strings.TrimSpace(argsStr)
-	}
-
 	return &ToolCall{Name: name, Args: args}
 }
 
-// ---------- Tool Execution & Security Engine ----------
 func executeAgentTool(tc *ToolCall) (string, bool) {
-	needsApproval := false
-
-	if config.Safety == "strict" {
+	needs := false
+	switch config.Safety {
+	case "strict":
 		switch tc.Name {
-		case "write_file", "apply_patch", "delete_file", "run_command":
-			needsApproval = true
+		case "write_file", "apply_patch", "delete_file", "run_command", "run_test", "run_linter":
+			needs = true
 		}
-	} else if config.Safety == "balanced" {
+	case "balanced":
 		switch tc.Name {
-		case "delete_file", "run_command":
-			needsApproval = true
+		case "delete_file", "run_command", "run_test", "run_linter":
+			needs = true
 		}
 	}
-
+	if tc.Name == "delete_file" && needs {
+		fmt.Print("Type DELETE to confirm: ")
+		r := bufio.NewReader(os.Stdin)
+		v, _ := r.ReadString('\n')
+		if strings.TrimSpace(v) != "DELETE" {
+			return "Delete cancelled.", false
+		}
+	} else if needs && !confirm("Confirm tool execution? [Y/n]: ") {
+		return "Operation cancelled.", false
+	}
 	if tc.Name == "run_command" && isDangerousCommand(tc.Args["command"]) {
-		fmt.Printf("%s⚠️ SAFETY ALERT: Dangerous shell command detected!%s\n", c(red), c(reset))
-		needsApproval = true
-	}
-
-	if needsApproval {
-		if tc.Name == "delete_file" {
-			fmt.Printf("%s⚠️ PERMISSION WARNING: %s will permanently delete target file!%s\n", c(red), tc.Name, c(reset))
-			fmt.Print("Type DELETE to confirm: ")
-			reader := bufio.NewReader(os.Stdin)
-			confirm, _ := reader.ReadString('\n')
-			if strings.TrimSpace(confirm) != "DELETE" {
-				return "Operation aborted by safety check.", false
-			}
-		} else {
-			fmt.Print(c(bold) + "Confirm tool execution? [Y/n]: " + c(reset))
-			reader := bufio.NewReader(os.Stdin)
-			confirm, _ := reader.ReadString('\n')
-			confirm = strings.TrimSpace(strings.ToLower(confirm))
-			if confirm == "n" || confirm == "no" {
-				return "Operation cancelled by user.", false
-			}
+		fmt.Println(c(red) + "⚠️ Dangerous command detected; explicit confirmation required." + c(reset))
+		if !confirm("Continue? [Y/n]: ") {
+			return "Blocked by safety policy.", false
 		}
 	}
-
-	result, err := runTool(tc.Name, tc.Args)
-	if err != nil {
-		return fmt.Sprintf("Tool Error: %v", err), true
+	res, e := runTool(tc.Name, tc.Args)
+	if e != nil {
+		return "Tool Error: " + e.Error(), true
 	}
-	return result, true
+	return res, true
 }
-
 func isDangerousCommand(cmd string) bool {
-	dangerPatterns := []string{
-		`rm\s+-rf\s+/`, `mkfs`, `dd\s+if=`, `>\s*/dev/sd`, `chmod\s+-R\s+777`, `:(){ :|:& };:`,
-		`rm\s+-rf\s+\*`, `drop\s+database`, `shutdown`, `reboot`,
-	}
-	for _, pat := range dangerPatterns {
-		matched, _ := regexp.MatchString(`(?i)`+pat, cmd)
-		if matched {
+	for _, p := range []string{`rm\s+-rf\s+/`, `rm\s+-rf\s+\*`, `mkfs`, `dd\s+if=`, `>\s*/dev/`, `chmod\s+-R\s+777`, `shutdown`, `reboot`, `drop\s+database`} {
+		if ok, _ := regexp.MatchString(`(?i)`+p, cmd); ok {
 			return true
 		}
 	}
@@ -1133,261 +819,270 @@ func isDangerousCommand(cmd string) bool {
 func runTool(name string, args map[string]string) (string, error) {
 	switch name {
 	case "read_file":
-		path := safeJoin(workspace, args["path"])
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
-		}
-		return string(data), nil
-
+		b, e := os.ReadFile(safeJoin(workspace, args["path"]))
+		return string(b), e
 	case "write_file":
-		relPath := args["path"]
-		path := safeJoin(workspace, relPath)
-		content := args["content"]
-
-		_ = createSnapshot(relPath)
-		_ = os.MkdirAll(filepath.Dir(path), 0755)
-
-		oldText := ""
-		if data, err := os.ReadFile(path); err == nil {
-			oldText = string(data)
+		p := args["path"]
+		full := safeJoin(workspace, p)
+		old := ""
+		if b, e := os.ReadFile(full); e == nil {
+			old = string(b)
 		}
-
-		err := os.WriteFile(path, []byte(content), 0644)
-		if err != nil {
-			return "", err
+		if e := createSnapshot(p); e != nil {
+			return "", e
 		}
-
-		diff := produceDiff(relPath, oldText, content)
-		return fmt.Sprintf("✅ File written (%d bytes): %s\n\nProposed Changes Diff:\n%s", len(content), relPath, diff), nil
-
+		if e := os.MkdirAll(filepath.Dir(full), 0755); e != nil {
+			return "", e
+		}
+		if e := atomicWrite(full, []byte(args["content"]), 0644); e != nil {
+			return "", e
+		}
+		return "✅ File written:\n" + produceDiff(p, old, args["content"]), nil
 	case "apply_patch":
-		relPath := args["path"]
-		patch := args["patch"]
-		path := safeJoin(workspace, relPath)
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("cannot read file to patch: %v", err)
+		p := args["path"]
+		full := safeJoin(workspace, p)
+		b, e := os.ReadFile(full)
+		if e != nil {
+			return "", e
 		}
-		oldText := string(data)
-
-		newText, err := applyPatchContent(oldText, patch)
-		if err != nil {
-			return "", fmt.Errorf("patch application failed: %v", err)
+		old := string(b)
+		nw, e := applyPatchContent(old, args["patch"])
+		if e != nil {
+			return "", e
 		}
-
-		_ = createSnapshot(relPath)
-		_ = os.WriteFile(path, []byte(newText), 0644)
-
-		diff := produceDiff(relPath, oldText, newText)
-		return fmt.Sprintf("✅ Patch applied successfully to %s\n\nDiff Preview:\n%s", relPath, diff), nil
-
+		if e = createSnapshot(p); e != nil {
+			return "", e
+		}
+		if e = atomicWrite(full, []byte(nw), 0644); e != nil {
+			return "", e
+		}
+		return "✅ Patch applied:\n" + produceDiff(p, old, nw), nil
 	case "delete_file":
-		relPath := args["path"]
-		path := safeJoin(workspace, relPath)
-		_ = createSnapshot(relPath)
-
-		if err := os.Remove(path); err != nil {
-			return "", err
+		p := args["path"]
+		full := safeJoin(workspace, p)
+		if e := createSnapshot(p); e != nil {
+			return "", e
 		}
-		return "✅ File removed (snapshot saved): " + relPath, nil
-
+		return "✅ Removed: " + p, os.Remove(full)
 	case "list_files":
-		path := workspace
-		if p, ok := args["path"]; ok && p != "" && p != "." {
-			path = safeJoin(workspace, p)
+		p := workspace
+		if args["path"] != "" {
+			p = safeJoin(workspace, args["path"])
 		}
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return "", err
+		ents, e := os.ReadDir(p)
+		if e != nil {
+			return "", e
 		}
-		var names []string
-		for _, e := range entries {
-			if e.IsDir() {
-				names = append(names, e.Name()+"/")
+		names := []string{}
+		for _, x := range ents {
+			if strings.HasPrefix(x.Name(), ".") {
+				continue
+			}
+			if x.IsDir() {
+				names = append(names, x.Name()+"/")
 			} else {
-				names = append(names, e.Name())
+				names = append(names, x.Name())
 			}
 		}
+		sort.Strings(names)
 		if len(names) == 0 {
 			return "(directory empty)", nil
 		}
 		return strings.Join(names, "\n"), nil
-
 	case "search_files":
-		pattern := args["pattern"]
-		var matches []string
-		_ = filepath.Walk(workspace, func(p string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() || strings.HasPrefix(info.Name(), ".") {
-				return nil
-			}
-			if strings.Contains(strings.ToLower(info.Name()), strings.ToLower(pattern)) {
-				rel, _ := filepath.Rel(workspace, p)
-				matches = append(matches, rel)
-			}
-			return nil
-		})
-		if len(matches) == 0 {
-			return "No matching files found.", nil
-		}
-		return strings.Join(matches, "\n"), nil
-
+		return searchFiles(args["pattern"]), nil
 	case "search_code":
-		query := args["query"]
-		scope := workspace
-		if s, ok := args["path"]; ok && s != "" {
-			scope = safeJoin(workspace, s)
-		}
-		var results []string
-		_ = filepath.Walk(scope, func(p string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() || info.Size() > 1_000_000 || strings.Contains(p, ".git") || strings.Contains(p, "node_modules") {
-				return nil
-			}
-			data, err := os.ReadFile(p)
-			if err == nil && strings.Contains(string(data), query) {
-				rel, _ := filepath.Rel(workspace, p)
-				results = append(results, rel)
-			}
-			return nil
-		})
-		if len(results) == 0 {
-			return "No code matches found.", nil
-		}
-		return strings.Join(results, "\n"), nil
-
+		return searchCode(args["query"], args["path"]), nil
 	case "find_symbol":
-		sym := args["name"]
-		var results []string
-		_ = filepath.Walk(workspace, func(p string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() || info.Size() > 500_000 || strings.Contains(p, ".git") || strings.Contains(p, "node_modules") {
-				return nil
-			}
-			data, err := os.ReadFile(p)
-			if err == nil {
-				lines := strings.Split(string(data), "\n")
-				for idx, line := range lines {
-					if strings.Contains(line, sym) && (strings.Contains(line, "func ") || strings.Contains(line, "class ") || strings.Contains(line, "function ") || strings.Contains(line, "def ")) {
-						rel, _ := filepath.Rel(workspace, p)
-						results = append(results, fmt.Sprintf("%s:%d -> %s", rel, idx+1, strings.TrimSpace(line)))
-					}
-				}
-			}
-			return nil
-		})
-		if len(results) == 0 {
-			return "No symbol definitions found.", nil
-		}
-		return strings.Join(results, "\n"), nil
-
+		return findSymbol(args["name"]), nil
 	case "file_info":
-		path := safeJoin(workspace, args["path"])
-		info, err := os.Stat(path)
-		if err != nil {
-			return "", err
+		i, e := os.Stat(safeJoin(workspace, args["path"]))
+		if e != nil {
+			return "", e
 		}
-		return fmt.Sprintf("Path: %s\nSize: %d bytes\nMode: %s\nModTime: %s", path, info.Size(), info.Mode(), info.ModTime().Format(time.RFC3339)), nil
-
+		return fmt.Sprintf("Path: %s\nSize: %d\nMode: %s\nModified: %s", safeJoin(workspace, args["path"]), i.Size(), i.Mode(), i.ModTime().Format(time.RFC3339)), nil
 	case "tree":
-		path := workspace
-		if p, ok := args["path"]; ok && p != "" && p != "." {
-			path = safeJoin(workspace, p)
+		p := workspace
+		if args["path"] != "" {
+			p = safeJoin(workspace, args["path"])
 		}
-		return dirTree(path, ""), nil
-
+		return dirTree(p, ""), nil
 	case "git_status":
 		return runGit("status", "--short")
-
 	case "git_diff":
 		return runGit("diff")
-
 	case "git_log":
-		count := "5"
-		if c, ok := args["count"]; ok {
-			count = c
+		count := args["count"]
+		if count == "" {
+			count = "5"
 		}
 		return runGit("log", "-n", count, "--oneline")
-
 	case "git_branch":
 		return runGit("branch", "-a")
-
 	case "run_command":
-		cmdStr := args["command"]
-		timeout := 60
-		if t, ok := args["timeout"]; ok {
-			_, _ = fmt.Sscanf(t, "%d", &timeout)
+		t := 60
+		if v, e := strconv.Atoi(args["timeout"]); e == nil && v > 0 && v <= 600 {
+			t = v
 		}
-		return executeShellCommand(cmdStr, timeout)
-
+		return executeShellCommand(args["command"], t)
 	case "run_test":
 		if projInfo.TestCommand == "" {
-			return "No automatic test command detected for this workspace.", nil
+			return "No test command detected.", nil
 		}
 		return executeShellCommand(projInfo.TestCommand, 90)
-
 	case "run_linter":
-		if exists(filepath.Join(workspace, "golangci.yml")) || projInfo.Type == "Go Modules" {
+		if projInfo.Type == "Go Modules" {
 			return executeShellCommand("go vet ./...", 60)
 		}
-		return "No default linter configured for this project type.", nil
-
+		return "No default linter configured.", nil
 	case "project_info":
-		return fmt.Sprintf("Project Type: %s\nTest Command: %s\nFiles Count: %d\nIs Git: %v\nRules Present: %v",
-			projInfo.Type, projInfo.TestCommand, projInfo.FilesCount, projInfo.IsGit, projInfo.Rules != ""), nil
-
+		return fmt.Sprintf("Type: %s\nTests: %s\nFiles: %d\nGit: %v\nRules: %v", projInfo.Type, projInfo.TestCommand, projInfo.FilesCount, projInfo.IsGit, projInfo.Rules != ""), nil
 	case "env_info":
-		return fmt.Sprintf("OS: %s\nArch: %s\nGo Version: %s\nWorkspace: %s", runtime.GOOS, runtime.GOARCH, runtime.Version(), workspace), nil
+		return fmt.Sprintf("OS: %s\nArch: %s\nRuntime: %s\nWorkspace: %s", runtime.GOOS, runtime.GOARCH, runtime.Version(), workspace), nil
 	}
-
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
-func applyPatchContent(original, patch string) (string, error) {
-	if strings.Contains(patch, "<<<<<<< SEARCH") && strings.Contains(patch, ">>>>>>> REPLACE") {
-		re := regexp.MustCompile(`(?s)<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE`)
-		matches := re.FindAllStringSubmatch(patch, -1)
-		if len(matches) == 0 {
-			return "", fmt.Errorf("invalid patch block format")
-		}
-		result := original
-		for _, match := range matches {
-			searchBlock := match[1]
-			replaceBlock := match[2]
-			if !strings.Contains(result, searchBlock) {
-				return "", fmt.Errorf("search block not found in file:\n%s", searchBlock)
-			}
-			result = strings.Replace(result, searchBlock, replaceBlock, 1)
-		}
-		return result, nil
+func atomicWrite(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".nooty-tmp"
+	if e := os.WriteFile(tmp, data, perm); e != nil {
+		return e
 	}
-	return "", fmt.Errorf("patch must strictly contain <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE blocks")
+	if e := os.Rename(tmp, path); e != nil {
+		_ = os.Remove(tmp)
+		return e
+	}
+	return nil
+}
+func searchFiles(pattern string) string {
+	var out []string
+	_ = filepath.Walk(workspace, func(p string, info os.FileInfo, e error) error {
+		if e != nil || info == nil || info.IsDir() || strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) || strings.Contains(p, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(info.Name()), strings.ToLower(pattern)) {
+			r, _ := filepath.Rel(workspace, p)
+			out = append(out, r)
+		}
+		return nil
+	})
+	if len(out) == 0 {
+		return "No matching files found."
+	}
+	sort.Strings(out)
+	return strings.Join(out, "\n")
+}
+func searchCode(query, scope string) string {
+	root := workspace
+	if scope != "" && scope != "." {
+		root = safeJoin(workspace, scope)
+	}
+	var out []string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, e error) error {
+		if e != nil || info == nil || info.IsDir() || info.Size() > 1000000 || strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) || strings.Contains(p, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
+			return nil
+		}
+		b, e := os.ReadFile(p)
+		if e == nil && strings.Contains(string(b), query) {
+			r, _ := filepath.Rel(workspace, p)
+			out = append(out, r)
+		}
+		return nil
+	})
+	if len(out) == 0 {
+		return "No matches found."
+	}
+	sort.Strings(out)
+	return strings.Join(out, "\n")
+}
+func findSymbol(sym string) string {
+	var out []string
+	_ = filepath.Walk(workspace, func(p string, info os.FileInfo, e error) error {
+		if e != nil || info == nil || info.IsDir() || info.Size() > 500000 {
+			return nil
+		}
+		b, e := os.ReadFile(p)
+		if e != nil {
+			return nil
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.Contains(line, sym) && (strings.Contains(line, "func ") || strings.Contains(line, "class ") || strings.Contains(line, "function ") || strings.Contains(line, "def ")) {
+				r, _ := filepath.Rel(workspace, p)
+				out = append(out, fmt.Sprintf("%s:%d -> %s", r, i+1, strings.TrimSpace(line)))
+			}
+		}
+		return nil
+	})
+	if len(out) == 0 {
+		return "No symbol definitions found."
+	}
+	return strings.Join(out, "\n")
+}
+func dirTree(root, indent string) string {
+	ents, e := os.ReadDir(root)
+	if e != nil {
+		return e.Error()
+	}
+	var b strings.Builder
+	shown := 0
+	for _, x := range ents {
+		if strings.HasPrefix(x.Name(), ".") || x.Name() == "node_modules" || x.Name() == "vendor" {
+			continue
+		}
+		shown++
+		prefix := indent + "├── "
+		next := indent + "│   "
+		if shown == len(ents) {
+			prefix = indent + "└── "
+			next = indent + "    "
+		}
+		b.WriteString(prefix + x.Name() + "\n")
+		if x.IsDir() {
+			b.WriteString(dirTree(filepath.Join(root, x.Name()), next))
+		}
+	}
+	return b.String()
 }
 
-func produceDiff(filename, oldText, newText string) string {
-	oldLines := strings.Split(oldText, "\n")
-	newLines := strings.Split(newText, "\n")
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("--- %s (original)\n+++ %s (modified)\n", filename, filename))
-
-	max := len(oldLines)
-	if len(newLines) > max {
-		max = len(newLines)
+func applyPatchContent(original, patch string) (string, error) {
+	re := regexp.MustCompile(`(?s)<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE`)
+	m := re.FindAllStringSubmatch(patch, -1)
+	if len(m) == 0 {
+		return "", fmt.Errorf("invalid patch format")
+	}
+	result := original
+	for _, x := range m {
+		if !strings.Contains(result, x[1]) {
+			return "", fmt.Errorf("search block not found")
+		}
+		result = strings.Replace(result, x[1], x[2], 1)
+	}
+	return result, nil
+}
+func produceDiff(file, oldText, newText string) string {
+	ol := strings.Split(oldText, "\n")
+	nl := strings.Split(newText, "\n")
+	var b strings.Builder
+	b.WriteString("--- " + file + "\n+++ " + file + "\n")
+	max := len(ol)
+	if len(nl) > max {
+		max = len(nl)
 	}
 	changes := 0
 	for i := 0; i < max; i++ {
-		var oldL, newL string
-		if i < len(oldLines) {
-			oldL = oldLines[i]
+		var a, z string
+		if i < len(ol) {
+			a = ol[i]
 		}
-		if i < len(newLines) {
-			newL = newLines[i]
+		if i < len(nl) {
+			z = nl[i]
 		}
-		if oldL != newL {
-			if i < len(oldLines) {
-				sb.WriteString(c(red) + "- " + oldL + c(reset) + "\n")
+		if a != z {
+			if i < len(ol) {
+				b.WriteString("- " + a + "\n")
 			}
-			if i < len(newLines) {
-				sb.WriteString(c(green) + "+ " + newL + c(reset) + "\n")
+			if i < len(nl) {
+				b.WriteString("+ " + z + "\n")
 			}
 			changes++
 		}
@@ -1395,297 +1090,10 @@ func produceDiff(filename, oldText, newText string) string {
 	if changes == 0 {
 		return "(no line changes)"
 	}
-	return sb.String()
+	return b.String()
 }
 
-func executeShellCommand(cmdStr string, timeoutSec int) (string, error) {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/C", cmdStr)
-	} else {
-		cmd = exec.Command("sh", "-c", cmdStr)
-	}
-
-	cmd.Dir = workspace
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	done := make(chan error)
-	go func() { done <- cmd.Wait() }()
-
-	select {
-	case err := <-done:
-		out := outBuf.String()
-		if errBuf.Len() > 0 {
-			out += "\n[stderr]\n" + errBuf.String()
-		}
-		if err != nil {
-			return out + fmt.Sprintf("\nExit status: %v", err), nil
-		}
-		if out == "" {
-			out = "(executed successfully with no output)"
-		}
-		return out, nil
-	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		_ = cmd.Process.Kill()
-		return "", fmt.Errorf("execution timed out (%d sec)", timeoutSec)
-	}
-}
-
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = workspace
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git %s error: %v", args[0], err)
-	}
-	s := strings.TrimSpace(string(out))
-	if s == "" {
-		s = "(no output)"
-	}
-	return s, nil
-}
-
-func dirTree(root, indent string) string {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err.Error()
-	}
-	var out string
-	for i, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") || e.Name() == "node_modules" || e.Name() == "vendor" {
-			continue
-		}
-		prefix := indent + "├── "
-		childIndent := indent + "│   "
-		if i == len(entries)-1 {
-			prefix = indent + "└── "
-			childIndent = indent + "    "
-		}
-		out += prefix + e.Name() + "\n"
-		if e.IsDir() {
-			out += dirTree(filepath.Join(root, e.Name()), childIndent)
-		}
-	}
-	return out
-}
-
-func safeJoin(base, rel string) string {
-	cleanRel := filepath.Clean(rel)
-	if filepath.IsAbs(cleanRel) {
-		relPath, err := filepath.Rel(base, cleanRel)
-		if err != nil || strings.HasPrefix(relPath, "..") {
-			return base
-		}
-		return cleanRel
-	}
-	joined := filepath.Clean(filepath.Join(base, cleanRel))
-	relPath, err := filepath.Rel(base, joined)
-	if err != nil || strings.HasPrefix(relPath, "..") {
-		return base
-	}
-	return joined
-}
-
-// ---------- Snapshot & Undo System ----------
-func createSnapshot(relPath string) error {
-	fullPath := safeJoin(workspace, relPath)
-	if !exists(fullPath) {
-		return nil
-	}
-
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		return err
-	}
-
-	ts := time.Now().Format("20060102-150405")
-	backupName := fmt.Sprintf("%s_%s.bak", ts, filepath.Base(relPath))
-	backupPath := filepath.Join(snapshotDir, backupName)
-
-	if err := os.WriteFile(backupPath, data, 0600); err != nil {
-		return err
-	}
-
-	snap := Snapshot{
-		ID:         fmt.Sprintf("snap_%d", len(snapshots)+1),
-		Timestamp:  time.Now().Format(time.RFC3339),
-		FilePath:   relPath,
-		BackupPath: backupPath,
-	}
-
-	snapshots = append(snapshots, snap)
-	saveSnapshots()
-	return nil
-}
-
-func undoLastSnapshot() {
-	if len(snapshots) == 0 {
-		fmt.Println("⚠️ No file snapshots found to restore.")
-		return
-	}
-
-	last := snapshots[len(snapshots)-1]
-	backupData, err := os.ReadFile(last.BackupPath)
-	if err != nil {
-		fmt.Printf("%s❌ Error reading snapshot backup: %v%s\n", c(red), err, c(reset))
-		return
-	}
-
-	targetPath := safeJoin(workspace, last.FilePath)
-	if err := os.WriteFile(targetPath, backupData, 0644); err != nil {
-		fmt.Printf("%s❌ Restoration failed: %v%s\n", c(red), err, c(reset))
-		return
-	}
-
-	snapshots = snapshots[:len(snapshots)-1]
-	saveSnapshots()
-	fmt.Printf("%s✅ Reverted [%s] back to snapshot (%s)%s\n", c(green), last.FilePath, last.Timestamp, c(reset))
-}
-
-func listSnapshots() {
-	if len(snapshots) == 0 {
-		fmt.Println("📜 No active workspace snapshots.")
-		return
-	}
-	fmt.Println(c(bold) + "\n📜 Workspace Modification Snapshots:" + c(reset))
-	for _, s := range snapshots {
-		fmt.Printf("  • [%s] %s → %s\n", s.ID, s.FilePath, s.Timestamp)
-	}
-	fmt.Println()
-}
-
-func loadSnapshots() {
-	data, err := os.ReadFile(snapshotLog)
-	if err != nil {
-		snapshots = []Snapshot{}
-		return
-	}
-	_ = json.Unmarshal(data, &snapshots)
-}
-
-func saveSnapshots() {
-	data, _ := json.MarshalIndent(snapshots, "", "  ")
-	_ = os.WriteFile(snapshotLog, data, 0600)
-}
-
-// ---------- Subcommands: Review, Explain, Commit & Shell Bang ----------
-func runReview() {
-	diff, err := runGit("diff")
-	if err != nil || diff == "(no output)" {
-		fmt.Println("ℹ️ No uncommitted changes detected in git workspace.")
-		return
-	}
-
-	reviewPrompt := []Message{
-		{Role: "system", Content: "You are a Senior Code Reviewer AI. Review the provided git diff for security bugs, logic issues, and performance optimizations. Provide structured findings with line suggestions."},
-		{Role: "user", Content: "Please review these uncommitted workspace changes:\n\n" + diff},
-	}
-
-	fmt.Println(c(bold) + c(cyan) + "\n🔍 Running Autonomous Code Review..." + c(reset))
-	streamResponse(reviewPrompt)
-}
-
-func runExplain(target string) {
-	path := safeJoin(workspace, target)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Printf("%s❌ Cannot read target: %v%s\n", c(red), err, c(reset))
-		return
-	}
-
-	explainPrompt := []Message{
-		{Role: "system", Content: "You are a Software Architect AI. Explain the code architecture, key data structures, and purpose clearly."},
-		{Role: "user", Content: fmt.Sprintf("Explain the code architecture of %s:\n\n%s", target, string(data))},
-	}
-
-	fmt.Printf("%s📖 Explaining %s...%s\n", c(bold)+c(cyan), target, c(reset))
-	streamResponse(explainPrompt)
-}
-
-func runAutoCommit() {
-	diff, err := runGit("diff")
-	if err != nil || diff == "(no output)" {
-		fmt.Println("ℹ️ No staged/unstaged changes to commit.")
-		return
-	}
-
-	commitPrompt := []Message{
-		{Role: "system", Content: "Generate a concise Conventional Commit message (e.g. fix(api): ..., feat(cli): ...) summarizing the diff. Return ONLY the single line commit message."},
-		{Role: "user", Content: "Git diff:\n" + diff},
-	}
-
-	fmt.Print(c(yellow) + "🤔 Generating commit message... " + c(reset))
-	msg, err := getModelResponseText(commitPrompt)
-	if err != nil {
-		fmt.Printf("%s❌ Error: %v%s\n", c(red), err, c(reset))
-		return
-	}
-
-	msg = strings.TrimSpace(msg)
-	fmt.Printf("\n%sSuggested Commit:%s %s\n", c(bold)+c(green), c(reset), msg)
-	fmt.Print("Execute git commit with this message? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-	if confirm != "n" && confirm != "no" {
-		out, err := runGit("commit", "-am", msg)
-		if err != nil {
-			fmt.Printf("%s❌ Commit failed: %v%s\n", c(red), err, c(reset))
-		} else {
-			fmt.Printf("%s✅ Committed successfully:\n%s%s\n", c(green), out, c(reset))
-		}
-	}
-}
-
-func runAutoTests() {
-	if projInfo.TestCommand == "" {
-		fmt.Println("⚠️ No automatic test suite runner recognized for this project type.")
-		return
-	}
-	fmt.Printf("%s🧪 Executing Test Suite (%s)...%s\n", c(bold)+c(cyan), projInfo.TestCommand, c(reset))
-	out, err := executeShellCommand(projInfo.TestCommand, 90)
-	if err != nil {
-		fmt.Printf("%s❌ Test Run Failed:\n%s%s\n", c(red), out, c(reset))
-	} else {
-		fmt.Printf("%s✅ Test Suite Passed:\n%s%s\n", c(green), out, c(reset))
-	}
-}
-
-func handleGitCommand(args []string) {
-	if len(args) == 0 {
-		out, _ := runGit("status", "--short")
-		fmt.Println(out)
-		return
-	}
-	out, err := runGit(args...)
-	if err != nil {
-		fmt.Printf("%s❌ Git Error: %v%s\n", c(red), err, c(reset))
-	} else {
-		fmt.Println(out)
-	}
-}
-
-func handleShellBang(cmd string) {
-	cmd = strings.TrimSpace(cmd)
-	fmt.Printf("\n%s⚡ Direct Shell Command:%s %s\n", c(yellow), c(reset), cmd)
-	fmt.Print("Execute? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	resp, _ := reader.ReadString('\n')
-	resp = strings.TrimSpace(strings.ToLower(resp))
-	if resp != "n" && resp != "no" {
-		executeShell(cmd)
-	} else {
-		fmt.Println("Cancelled.")
-	}
-}
-
-func executeShell(command string) {
+func executeShellCommand(command string, timeout int) (string, error) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/C", command)
@@ -1693,179 +1101,367 @@ func executeShell(command string) {
 		cmd = exec.Command("sh", "-c", command)
 	}
 	cmd.Dir = workspace
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("%s❌ Command failed: %v%s\n", c(red), err, c(reset))
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if e := cmd.Start(); e != nil {
+		return "", e
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case e := <-done:
+		s := out.String()
+		if errOut.Len() > 0 {
+			s += "\n[stderr]\n" + errOut.String()
+		}
+		if e != nil {
+			s += fmt.Sprintf("\nExit status: %v", e)
+		}
+		if s == "" {
+			s = "(no output)"
+		}
+		return s, nil
+	case <-time.After(time.Duration(timeout) * time.Second):
+		_ = cmd.Process.Kill()
+		return "", fmt.Errorf("execution timed out (%ds)", timeout)
 	}
 }
+func runGit(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if e := cmd.Run(); e != nil {
+		msg := strings.TrimSpace(errOut.String())
+		if msg == "" {
+			msg = e.Error()
+		}
+		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+	}
+	s := strings.TrimSpace(out.String())
+	if s == "" {
+		s = "(no output)"
+	}
+	return s, nil
+}
 
-// ---------- Utilities & Handlers ----------
-func handleWorkspace(args []string) {
-	if len(args) == 0 {
-		fmt.Printf("📁 Workspace: %s\n", formatPath(workspace))
+func runInit() {
+	_ = os.MkdirAll(snapshotDir, 0700)
+	rules := filepath.Join(projectNootyDir, "rules.md")
+	if !exists(rules) {
+		sample := "# NootyCLI Project Rules\n- Maintain clean architecture.\n- Write tests for new functions.\n- Do not modify database migrations automatically.\n- Prefer returned errors over panics.\n"
+		if e := os.WriteFile(rules, []byte(sample), 0644); e != nil {
+			fmt.Println("❌", e)
+			return
+		}
+	}
+	ctx := filepath.Join(projectNootyDir, "context.json")
+	if !exists(ctx) {
+		_ = os.WriteFile(ctx, []byte("{\n  \"project_notes\": \"\"\n}\n"), 0644)
+	}
+	refreshWorkspaceState()
+	fmt.Printf("✅ .nooty initialized in %s\n", workspace)
+}
+
+func createSnapshot(rel string) error {
+	full := safeJoin(workspace, rel)
+	b, e := os.ReadFile(full)
+	if e != nil {
+		if os.IsNotExist(e) {
+			return nil
+		}
+		return e
+	}
+	ts := time.Now().Format("20060102-150405.000000000")
+	name := fmt.Sprintf("%s_%s.bak", ts, filepath.Base(rel))
+	path := filepath.Join(snapshotDir, name)
+	if e = atomicWrite(path, b, 0600); e != nil {
+		return e
+	}
+	snapshots = append(snapshots, Snapshot{ID: fmt.Sprintf("snap_%d", len(snapshots)+1), Timestamp: time.Now().Format(time.RFC3339Nano), FilePath: rel, BackupPath: path})
+	return saveSnapshots()
+}
+func undoLastSnapshot() {
+	if len(snapshots) == 0 {
+		fmt.Println("⚠️ No snapshots.")
 		return
 	}
-	switch args[0] {
-	case "show":
-		fmt.Printf("📁 Workspace: %s\n", formatPath(workspace))
-	case "set":
-		if len(args) < 2 {
-			fmt.Println("Usage: /workspace set <path>")
-			return
-		}
-		path, _ := filepath.Abs(args[1])
-		if info, err := os.Stat(path); err != nil || !info.IsDir() {
-			fmt.Println("❌ Directory does not exist.")
-			return
-		}
-		workspace = path
-		config.Workspace = path
-		projInfo = detectProject(workspace)
-		saveConfig()
-		fmt.Printf("✅ Workspace set to: %s\n", formatPath(workspace))
-	default:
-		fmt.Println("❌ Subcommand unknown. Use: show | set <path>")
+	last := snapshots[len(snapshots)-1]
+	b, e := os.ReadFile(last.BackupPath)
+	if e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	if e = atomicWrite(safeJoin(workspace, last.FilePath), b, 0644); e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	snapshots = snapshots[:len(snapshots)-1]
+	_ = saveSnapshots()
+	fmt.Println("✅ Reverted:", last.FilePath)
+}
+func listSnapshots() {
+	if len(snapshots) == 0 {
+		fmt.Println("📜 No snapshots.")
+		return
+	}
+	for _, s := range snapshots {
+		fmt.Printf("• %s  %s  %s\n", s.ID, s.FilePath, s.Timestamp)
 	}
 }
+func loadSnapshots() {
+	b, e := os.ReadFile(snapshotLog)
+	if e != nil {
+		snapshots = []Snapshot{}
+		return
+	}
+	if json.Unmarshal(b, &snapshots) != nil {
+		snapshots = []Snapshot{}
+	}
+}
+func saveSnapshots() error {
+	b, e := json.MarshalIndent(snapshots, "", "  ")
+	if e != nil {
+		return e
+	}
+	return atomicWrite(snapshotLog, b, 0600)
+}
 
-func runDoctor() {
-	fmt.Println(c(bold) + "\n🏥 NootyCLI Diagnostic Doctor" + c(reset))
-	fmt.Printf("• Provider Endpoint : %s\n", config.ProviderEndpoint)
-	fmt.Printf("• Active Model      : %s\n", config.Model)
-	fmt.Printf("• API Key           : %s\n", maskAPIKey(config.APIKey))
-	fmt.Printf("• Active Workspace  : %s\n", formatPath(workspace))
-	fmt.Printf("• Detected Project  : %s (Git: %v)\n", projInfo.Type, projInfo.IsGit)
-	fmt.Printf("• Safety Mode       : %s\n", config.Safety)
-	fmt.Print("• Provider Status   : ")
+func safeJoin(base, rel string) string {
+	baseAbs, _ := filepath.Abs(base)
+	if rel == "" {
+		return baseAbs
+	}
+	candidate := rel
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(baseAbs, candidate)
+	}
+	candidate, _ = filepath.Abs(candidate)
+	r, e := filepath.Rel(baseAbs, candidate)
+	if e != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return baseAbs
+	}
+	return candidate
+}
 
-	models, err := fetchAvailableModels()
-	if err != nil {
-		fmt.Printf("%sFAILED (%v)%s\n\n", c(red), err, c(reset))
+func runReview() {
+	diff, e := runGit("diff")
+	if e != nil || diff == "(no output)" {
+		fmt.Println("ℹ️ No uncommitted changes.")
+		return
+	}
+	messages := []Message{{Role: "system", Content: "You are a senior code reviewer. Find correctness, security, performance, and maintainability issues. Be concise."}, {Role: "user", Content: "Review this git diff:\n\n" + truncateString(diff, 20000)}}
+	streamResponse(messages)
+}
+func runExplain(target string) {
+	p := safeJoin(workspace, target)
+	b, e := os.ReadFile(p)
+	if e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	messages := []Message{{Role: "system", Content: "You are a software architect. Explain the target code and its architecture clearly."}, {Role: "user", Content: "Explain " + target + ":\n\n" + truncateString(string(b), 20000)}}
+	streamResponse(messages)
+}
+func runAutoCommit() {
+	diff, e := runGit("diff")
+	if e != nil || diff == "(no output)" {
+		fmt.Println("ℹ️ No changes.")
+		return
+	}
+	msg, e := getModelResponseText([]Message{{Role: "system", Content: "Return ONLY one Conventional Commit message line."}, {Role: "user", Content: truncateString(diff, 20000)}})
+	if e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	msg = strings.ReplaceAll(strings.TrimSpace(msg), "\n", " ")
+	fmt.Println("Suggested commit:", msg)
+	if !confirm("Commit? [Y/n]: ") {
+		return
+	}
+	out, e := runGit("add", "-A")
+	if e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	_ = out
+	if out, e = runGit("commit", "-m", msg); e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	fmt.Println(out)
+}
+func runAutoTests() {
+	if projInfo.TestCommand == "" {
+		fmt.Println("⚠️ No test runner detected.")
+		return
+	}
+	fmt.Println("🧪", projInfo.TestCommand)
+	out, e := executeShellCommand(projInfo.TestCommand, 90)
+	fmt.Println(out)
+	if e != nil {
+		fmt.Println("❌", e)
+	}
+}
+func handleGitCommand(args []string) {
+	if len(args) == 0 {
+		args = []string{"status", "--short"}
+	}
+	out, e := runGit(args...)
+	if e != nil {
+		fmt.Println("❌", e)
 	} else {
-		fmt.Printf("%sOK (%d models accessible via %s)%s\n\n", c(green), len(models), activeDNSName, c(reset))
+		fmt.Println(out)
 	}
 }
-
+func handleShellBang(cmd string) {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return
+	}
+	fmt.Println("⚡", cmd)
+	if confirm("Execute? [Y/n]: ") {
+		out, e := executeShellCommand(cmd, 120)
+		fmt.Println(out)
+		if e != nil {
+			fmt.Println("❌", e)
+		}
+	}
+}
+func handleWorkspace(args []string) {
+	if len(args) == 0 || args[0] == "show" {
+		fmt.Println("📁 Workspace:", formatPath(workspace))
+		return
+	}
+	if args[0] != "set" || len(args) < 2 {
+		fmt.Println("Usage: /workspace set <path>")
+		return
+	}
+	p, e := filepath.Abs(args[1])
+	if e != nil {
+		fmt.Println("❌", e)
+		return
+	}
+	i, e := os.Stat(p)
+	if e != nil || !i.IsDir() {
+		fmt.Println("❌ Directory does not exist.")
+		return
+	}
+	workspace = p
+	config.Workspace = p
+	saveConfig()
+	refreshWorkspaceState()
+	fmt.Println("✅ Workspace:", formatPath(workspace))
+}
+func runDoctor() {
+	fmt.Println("\n🏥 NootyCLI Doctor")
+	fmt.Println("Provider:", config.ProviderEndpoint)
+	fmt.Println("Model:", config.Model)
+	fmt.Println("API Key:", maskAPIKey(config.APIKey))
+	fmt.Println("Workspace:", formatPath(workspace))
+	fmt.Println("Project:", projInfo.Type, "Git:", projInfo.IsGit)
+	if _, e := fetchAvailableModels(); e != nil {
+		fmt.Println("❌ Provider:", e)
+	} else {
+		fmt.Println("✅ Provider: OK via", activeDNSName)
+	}
+}
 func handleMemory(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: /memory list | add <text> | forget <id>")
-		return
+		args = []string{"list"}
 	}
 	switch args[0] {
 	case "list":
 		if len(memories) == 0 {
-			fmt.Println("🧠 No persistent memories found.")
+			fmt.Println("🧠 No memories.")
 			return
 		}
-		fmt.Println(c(bold) + "\n🧠 Persistent Memories:" + c(reset))
 		for _, m := range memories {
-			fmt.Printf("  [%d] (%s) %s\n", m.ID, m.Tag, m.Content)
+			fmt.Printf("[%d] (%s) %s\n", m.ID, m.Tag, m.Content)
 		}
-		fmt.Println()
 	case "add":
 		if len(args) < 2 {
 			fmt.Println("Usage: /memory add <text>")
 			return
 		}
-		text := strings.Join(args[1:], " ")
-		m := Memory{
-			ID:      len(memories) + 1,
-			Tag:     "context",
-			Content: text,
-			Added:   time.Now().Format(time.RFC3339),
-		}
+		m := Memory{ID: len(memories) + 1, Tag: "context", Content: strings.Join(args[1:], " "), Added: time.Now().Format(time.RFC3339)}
 		memories = append(memories, m)
 		saveMemories()
-		fmt.Printf("✅ Saved memory ID [%d]\n", m.ID)
+		fmt.Println("✅ Saved memory", m.ID)
 	case "forget":
 		if len(args) < 2 {
-			fmt.Println("Usage: /memory forget <id>")
 			return
 		}
 		id, _ := strconv.Atoi(args[1])
-		var newMem []Memory
+		next := memories[:0]
 		for _, m := range memories {
 			if m.ID != id {
-				newMem = append(newMem, m)
+				next = append(next, m)
 			}
 		}
-		memories = newMem
+		memories = next
 		saveMemories()
-		fmt.Printf("✅ Memory [%d] removed.\n", id)
+		fmt.Println("✅ Removed", id)
 	}
 }
-
 func handleSafety(args []string) {
 	if len(args) == 0 {
-		fmt.Printf("🛡️ Safety Mode: %s\n", config.Safety)
+		fmt.Println("🛡️ Safety:", config.Safety)
 		return
 	}
-	mode := strings.ToLower(args[0])
-	if mode == "strict" || mode == "balanced" || mode == "auto" {
-		config.Safety = mode
-		saveConfig()
-		fmt.Printf("✅ Safety mode updated to '%s'.\n", config.Safety)
-	} else {
-		fmt.Println("Usage: /safety strict | balanced | auto")
+	m := strings.ToLower(args[0])
+	if m != "strict" && m != "balanced" && m != "auto" {
+		fmt.Println("Usage: /safety strict|balanced|auto")
+		return
 	}
+	config.Safety = m
+	saveConfig()
+	fmt.Println("✅ Safety:", m)
 }
-
 func showHistory() {
 	if len(sessionMessages) == 0 {
-		fmt.Println("💬 Session log clean.")
+		fmt.Println("💬 No history.")
 		return
 	}
-	fmt.Println(c(bold) + "\n📜 Session Log:" + c(reset))
-	for _, msg := range sessionMessages {
-		role := "👤 User"
-		if msg.Role == "assistant" {
-			role = "🤖 Nooty"
-		}
-		fmt.Printf("%s%s:%s %s\n", c(bold), role, c(reset), truncateString(msg.Content, 100))
+	for _, m := range sessionMessages {
+		fmt.Printf("%s: %s\n", m.Role, truncateString(m.Content, 200))
 	}
-	fmt.Println()
 }
 
-// ---------- Persistence Methods ----------
 func loadConfig() {
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		config = Config{
-			ProviderEndpoint: "https://api.openai.com/v1",
-			APIKey:           os.Getenv("OPENAI_API_KEY"),
-			Model:            "gpt-4o-mini",
-			Safety:           "balanced",
-		}
+	b, e := os.ReadFile(configFile)
+	if e != nil {
+		config = Config{ProviderEndpoint: "https://api.openai.com/v1", APIKey: os.Getenv("OPENAI_API_KEY"), Model: "gpt-4o-mini", Safety: "balanced"}
 		if config.APIKey == "" {
 			config.APIKey = os.Getenv("NOOTY_API_KEY")
 		}
 		return
 	}
-	_ = json.Unmarshal(data, &config)
+	_ = json.Unmarshal(b, &config)
 	if config.APIKey == "" {
 		config.APIKey = os.Getenv("OPENAI_API_KEY")
 		if config.APIKey == "" {
 			config.APIKey = os.Getenv("NOOTY_API_KEY")
 		}
 	}
+	if config.Safety == "" {
+		config.Safety = "balanced"
+	}
 }
-
-func saveConfig() {
-	data, _ := json.MarshalIndent(config, "", "  ")
-	_ = os.WriteFile(configFile, data, 0600)
-}
-
+func saveConfig() { b, _ := json.MarshalIndent(config, "", "  "); _ = atomicWrite(configFile, b, 0600) }
 func loadMemories() {
-	data, err := os.ReadFile(memFile)
-	if err != nil {
+	b, e := os.ReadFile(memFile)
+	if e != nil {
 		memories = []Memory{}
 		return
 	}
-	_ = json.Unmarshal(data, &memories)
+	if json.Unmarshal(b, &memories) != nil {
+		memories = []Memory{}
+	}
 }
-
 func saveMemories() {
-	data, _ := json.MarshalIndent(memories, "", "  ")
-	_ = os.WriteFile(memFile, data, 0600)
+	b, _ := json.MarshalIndent(memories, "", "  ")
+	_ = atomicWrite(memFile, b, 0600)
 }
