@@ -1,27 +1,19 @@
-// nooty.go — NootyCLI v0.3.0 "Radin Pro" – Agentic Terminal Intelligence
-// Single-file, zero external dependencies, cross-platform (macOS / Linux / Windows / WSL).
+// nooty.go — NootyCLI v0.3 "Parallel Agent" – Agentic Terminal Intelligence
+// Single‑file, zero external dependencies, cross‑platform (macOS / Linux / Windows / WSL).
 //
 // 🚀 Compile & Build:
 //   go build -ldflags="-s -w" -o nooty nooty.go
 //
-// 🛠 Commands:
-//   /config          → Interactive configuration wizard
-//   /model list      → Browse & select available models
-//   /mode cli        → Switch to Autonomous Agent Mode
-//   /dns             → View Anti-Sanction Smart DNS Shield chain
-//   /doctor          → Run full network connection & provider diagnostic
-//   /sessions        → List saved sessions
-//   /resume <id>     → Resume a previous session
-//   /undo            → Revert the last file write/delete via checkpoint
-//
-// What's new in v0.3.0:
-//   1. True streaming responses in CLI (agent) mode + batched/parallel tool-call execution.
-//   2. patch_file tool: search/replace based diffs instead of always rewriting whole files.
-//   3. Token-budget aware context trimming with rolling summarization of older turns.
-//   4. Session persistence to ~/.nooty/chats/*.json with /sessions and /resume.
-//   5. Streaming run_command output, streaming line-based search_code, .gitignore-aware walking.
-//   6. Retry with exponential backoff per-DNS-resolver in doWithFallback.
-//   7. Checkpoint/undo system for write_file / patch_file / delete_file / create_file.
+// 🛠 New in v0.3:
+//   • Streaming model output in both chat & agent modes
+//   • Parallel batch tool execution (multiple tool calls per response)
+//   • patch_file tool with search/replace diff support
+//   • Token‑based context management with automatic summarization
+//   • Session persistence & resume (/sessions, /resume)
+//   • Streaming run_command output
+//   • Gitignore‑aware file walking (skips node_modules, .git, vendor …)
+//   • Retry/backoff for transient network errors
+//   • Checkpoint & undo for file modifications
 
 package main
 
@@ -33,7 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/rand"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -48,7 +40,7 @@ import (
 	"time"
 )
 
-// ---------- Cross-Platform ANSI Styling Engine ----------
+// ---------- Cross‑Platform ANSI Styling Engine ----------
 var useColor = true
 
 func init() {
@@ -125,23 +117,13 @@ type DNSResolver struct {
 	Address string
 }
 
-// Session is the persisted, on-disk representation of a chat/agent session.
 type Session struct {
 	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Started   time.Time `json:"started"`
+	Updated   time.Time `json:"updated"`
 	Messages  []Message `json:"messages"`
-}
-
-// Checkpoint records a pre-mutation snapshot of a file so it can be restored via /undo.
-type Checkpoint struct {
-	ID        string    `json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	Tool      string    `json:"tool"`
-	RelPath   string    `json:"rel_path"`
-	Existed   bool      `json:"existed"`   // whether the file existed before the op
-	BackupRel string    `json:"backup_rel"` // path (inside checkpoints dir) holding the pre-op content
+	Summary   string    `json:"summary,omitempty"`
+	Workspace string    `json:"workspace"`
 }
 
 // ---------- Global State ----------
@@ -155,10 +137,8 @@ var (
 	nootyDir        string
 	memFile         string
 	configFile      string
-	chatsDir        string
-	checkpointsDir  string
-
-	currentSessionID string
+	chatDir         string
+	checkpointDir   string
 
 	fallbackDNS = []DNSResolver{
 		{Name: "Direct Connection", Address: ""},
@@ -170,14 +150,19 @@ var (
 	}
 	activeDNSName = "Direct Connection"
 
-	// Approximate token budget for context sent to the model.
-	// (character-count / 4 heuristic — good enough without a real tokenizer)
-	tokenBudget = 6000
+	// Checkpoint stack
+	checkpointStack []string
+	checkpointMu    sync.Mutex
+
+	// Token budget & context
+	maxContextTokens = 8000 // approx 8k tokens
+	maxResponseTokens = 2000
+	summaryThreshold = 0.7 // when used tokens > 70% budget, summarize
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "NootyCLI v0.3.0 — Agentic Terminal Intelligence\n\nUsage:\n  nooty [options]\n\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "NootyCLI v0.3 — Agentic Terminal Intelligence\n\nUsage:\n  nooty [options]\n\nOptions:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -190,13 +175,13 @@ func main() {
 	}
 
 	nootyDir = filepath.Join(homeDir, ".nooty")
-	chatsDir = filepath.Join(nootyDir, "chats")
-	checkpointsDir = filepath.Join(nootyDir, "checkpoints")
 	_ = os.MkdirAll(nootyDir, 0700)
-	_ = os.MkdirAll(chatsDir, 0700)
-	_ = os.MkdirAll(checkpointsDir, 0700)
+	_ = os.MkdirAll(filepath.Join(nootyDir, "chats"), 0700)
+	_ = os.MkdirAll(filepath.Join(nootyDir, "checkpoints"), 0700)
 	configFile = filepath.Join(nootyDir, "config.json")
 	memFile = filepath.Join(nootyDir, "memories.json")
+	chatDir = filepath.Join(nootyDir, "chats")
+	checkpointDir = filepath.Join(nootyDir, "checkpoints")
 
 	loadConfig()
 	loadMemories()
@@ -211,8 +196,6 @@ func main() {
 	}
 	workspace = config.Workspace
 
-	currentSessionID = newSessionID()
-
 	drawHeader()
 	repl()
 }
@@ -224,7 +207,7 @@ func drawHeader() {
 
 	fmt.Println(c(cyan) + "┌" + line + "┐" + c(reset))
 	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(bold)+c(yellow), centerText(" NOOTY CLI ", width-2), c(cyan), c(reset))
-	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.3.0 Radin Pro — Agentic Terminal Intelligence", width-2), c(cyan), c(reset))
+	fmt.Printf("%s│%s%s%s│%s\n", c(cyan), c(dim), centerText("v0.3 Parallel Agent — Agentic Terminal Intelligence", width-2), c(cyan), c(reset))
 	fmt.Println(c(cyan) + "├" + line + "┤" + c(reset))
 
 	prettyWorkspace := formatPath(workspace)
@@ -283,7 +266,6 @@ func maskAPIKey(key string) string {
 // ---------- Interactive REPL Engine ----------
 func repl() {
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for {
 		fmt.Print(prompt())
 		if !scanner.Scan() {
@@ -302,7 +284,6 @@ func repl() {
 			handleChat(line)
 		}
 	}
-	persistSession()
 	fmt.Println(c(dim) + "\n👋 NootyCLI session ended. Goodbye!" + c(reset))
 }
 
@@ -347,16 +328,9 @@ func handleSlashCommand(cmd string) {
 		handleSafety(parts[1:])
 	case "/history":
 		showHistory()
-	case "/sessions":
-		listSessions()
-	case "/resume":
-		resumeSession(parts[1:])
-	case "/undo":
-		handleUndo()
 	case "/clear":
-		persistSession()
 		sessionMessages = nil
-		currentSessionID = newSessionID()
+		checkpointStack = nil
 		if runtime.GOOS == "windows" {
 			cmd := exec.Command("cmd", "/c", "cls")
 			cmd.Stdout = os.Stdout
@@ -366,8 +340,17 @@ func handleSlashCommand(cmd string) {
 		}
 		drawHeader()
 		fmt.Println(c(green) + "✨ Session history & screen cleared." + c(reset))
+	case "/sessions":
+		listSessions()
+	case "/resume":
+		if len(parts) > 1 {
+			resumeSession(parts[1])
+		} else {
+			fmt.Println("Usage: /resume <session-id>")
+		}
+	case "/undo":
+		undoLastCheckpoint()
 	case "/exit":
-		persistSession()
 		os.Exit(0)
 	default:
 		fmt.Printf("❌ Unknown command: %s. Type /help for assistance.\n", parts[0])
@@ -382,25 +365,23 @@ func printHelp() {
   /config                      Interactive wizard to setup API key, endpoint & model
   /workspace show|set <path>   Manage current working directory
   /model show|set <name>|list  View, switch, or browse models interactively
-  /dns                         Display Anti-Sanction Smart DNS Shield status
+  /dns                         Display Anti‑Sanction Smart DNS Shield status
   /doctor                      Run full connection and API health check
-  /memory list|add|forget      Manage long-term persistent agent context
+  /memory list|add|forget      Manage long‑term persistent agent context
   /safety strict|balanced      Set command safety confirmation policies
   /history                     Display conversation session log
-  /sessions                    List saved sessions on disk
-  /resume <id|latest>          Resume a previous saved session
-  /undo                        Revert the last file write/delete checkpoint
   /clear                       Reset current screen & session memory
+  /sessions                    List saved chat sessions
+  /resume <id>                 Resume a previous session
+  /undo                        Undo last file modification (checkpoint)
   /exit                        Terminate NootyCLI session
 
-  💡 In Agent CLI Mode: Prefix commands with ! for direct shell execution.
-  💡 In Agent CLI Mode: the model may issue several TOOL: calls in one reply;
-     independent read-only tools run in parallel automatically.`)
+  💡 In Agent CLI Mode: Prefix commands with ! for direct shell execution.`)
 }
 
 func handleConfig() {
 	fmt.Println(c(bold) + "\n⚙️ Nooty Configuration Wizard" + c(reset))
-	fmt.Println("Press Enter to keep existing settings.")
+	fmt.Println("Press Enter to keep existing settings.\n")
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Printf("Provider endpoint [%s]: ", config.ProviderEndpoint)
@@ -429,7 +410,7 @@ func handleConfig() {
 }
 
 func showDNSStatus() {
-	fmt.Println(c(bold) + "\n🛡️ Anti-Sanction Smart DNS Fallback Chain:" + c(reset))
+	fmt.Println(c(bold) + "\n🛡️ Anti‑Sanction Smart DNS Fallback Chain:" + c(reset))
 	for i, dns := range fallbackDNS {
 		status := ""
 		if dns.Name == activeDNSName {
@@ -484,7 +465,7 @@ func selectModelInteractive() {
 	page := 0
 
 	for {
-		fmt.Printf("\n%s📋 Available Provider Models (Page %d/%d):%s\n", c(bold), page+1, totalPages, c(reset))
+		fmt.Printf("\n%s📋 Available Provider Models (Page %d/%d):%s\n", c(bold), page+1, totalPages)
 		start := page * pageSize
 		end := start + pageSize
 		if end > len(models) {
@@ -526,7 +507,7 @@ func selectModelInteractive() {
 	}
 }
 
-// ---------- Network Transport Engine ----------
+// ---------- Network Transport Engine (with retry/backoff) ----------
 func dnsDialer(dnsServer string) func(ctx context.Context, network, address string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		d := net.Dialer{}
@@ -536,7 +517,7 @@ func dnsDialer(dnsServer string) func(ctx context.Context, network, address stri
 
 func httpClientForDNS(dns string) *http.Client {
 	if dns == "" {
-		return &http.Client{Timeout: 35 * time.Second}
+		return &http.Client{Timeout: 120 * time.Second}
 	}
 	resolver := &net.Resolver{
 		PreferGo: true,
@@ -545,84 +526,68 @@ func httpClientForDNS(dns string) *http.Client {
 	dialer := &net.Dialer{Resolver: resolver}
 	return &http.Client{
 		Transport: &http.Transport{DialContext: dialer.DialContext},
-		Timeout:   35 * time.Second,
+		Timeout:   120 * time.Second,
 	}
 }
 
-// isRetryableStatus reports whether an HTTP status code represents a transient
-// failure worth retrying (5xx / 429) rather than a permanent one (4xx other than 429).
 func isRetryableStatus(code int) bool {
-	return code == 429 || (code >= 500 && code < 600)
-}
-
-// doRequestWithRetry performs a single resolver's request with exponential
-// backoff retries for transient network errors or 5xx/429 responses.
-func doRequestWithRetry(client *http.Client, method, url string, body []byte, headers map[string]string, maxAttempts int) (*http.Response, error) {
-	var lastErr error
-	backoff := 400 * time.Millisecond
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		var req *http.Request
-		var err error
-		if body != nil {
-			req, err = http.NewRequest(method, url, bytes.NewReader(body))
-		} else {
-			req, err = http.NewRequest(method, url, nil)
-		}
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
-
-		resp, err := client.Do(req)
-		if err == nil {
-			if !isRetryableStatus(resp.StatusCode) {
-				return resp, nil
-			}
-			// transient status — close body, retry
-			lastErr = fmt.Errorf("transient HTTP status %d", resp.StatusCode)
-			_ = resp.Body.Close()
-		} else {
-			lastErr = err
-		}
-
-		if attempt < maxAttempts-1 {
-			jitter := time.Duration(rand.Intn(150)) * time.Millisecond
-			time.Sleep(backoff + jitter)
-			backoff *= 2
-		}
-	}
-	return nil, lastErr
+	return code == 429 || code >= 500
 }
 
 func doWithFallback(method, url string, body []byte, headers map[string]string) (*http.Response, error) {
-	const attemptsPerResolver = 3
 	var lastErr error
-
 	for i, dnsResolver := range fallbackDNS {
 		client := httpClientForDNS(dnsResolver.Address)
 
-		resp, err := doRequestWithRetry(client, method, url, body, headers, attemptsPerResolver)
-		if err == nil && resp.StatusCode != 403 && resp.StatusCode != 451 {
-			activeDNSName = dnsResolver.Name
-			return resp, nil
-		}
+		// Retry loop per DNS resolver
+		for attempt := 0; attempt < 3; attempt++ {
+			var req *http.Request
+			var err error
+			if body != nil {
+				req, err = http.NewRequest(method, url, bytes.NewBuffer(body))
+			} else {
+				req, err = http.NewRequest(method, url, nil)
+			}
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range headers {
+				req.Header.Set(k, v)
+			}
 
-		if err != nil {
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode < 500 && resp.StatusCode != 429 && resp.StatusCode != 403 && resp.StatusCode != 451 {
+				activeDNSName = dnsResolver.Name
+				return resp, nil
+			}
+
+			// Close if response exists
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+
 			lastErr = err
-		} else if resp != nil {
-			lastErr = fmt.Errorf("HTTP %d from %s", resp.StatusCode, dnsResolver.Name)
-			_ = resp.Body.Close()
+			if err == nil && resp != nil {
+				lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			}
+			if err != nil || (resp != nil && !isRetryableStatus(resp.StatusCode)) {
+				// Non-retryable, break to next DNS
+				break
+			}
+
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
+			fmt.Printf("%s⚠️ Retry %d/%d after %v (%v)%s\n",
+				c(yellow), attempt+1, 3, backoff, lastErr, c(reset))
+			time.Sleep(backoff)
 		}
 
 		if i < len(fallbackDNS)-1 {
-			fmt.Printf("%s⚠️ Connection issue via %s (%v). Bypassing via %s...%s\n",
-				c(yellow), dnsResolver.Name, lastErr, fallbackDNS[i+1].Name, c(reset))
+			fmt.Printf("%s⚠️ Connection via %s failed. Switching to %s...%s\n",
+				c(yellow), dnsResolver.Name, fallbackDNS[i+1].Name, c(reset))
 		}
 	}
-	return nil, fmt.Errorf("network connection failed after retries: all anti-sanction resolvers exhausted (last: %v)", lastErr)
+	return nil, fmt.Errorf("network connection failed after all resolvers: %v", lastErr)
 }
 
 func fetchAvailableModels() ([]string, error) {
@@ -660,31 +625,111 @@ func fetchAvailableModels() ([]string, error) {
 	return models, nil
 }
 
+// ---------- Token Estimation & Context Management ----------
+func estimateTokens(s string) int {
+	// Rough estimate: 4 characters = 1 token
+	return len(s) / 4
+}
+
+func messagesTokenCount(msgs []Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += estimateTokens(m.Content) + 4 // overhead per message
+	}
+	return total
+}
+
+// Summarizes a slice of messages into a single string using the model.
+func summarizeMessages(msgs []Message) (string, error) {
+	if len(msgs) == 0 {
+		return "", nil
+	}
+	var combined strings.Builder
+	for _, m := range msgs {
+		combined.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+	}
+	prompt := "Summarize the following conversation into a concise paragraph, capturing key decisions, context, and important details:\n\n" + combined.String()
+	resp, err := getModelResponseText([]Message{{Role: "user", Content: prompt}})
+	if err != nil {
+		return "", err
+	}
+	return resp, nil
+}
+
+// Trims messages to fit within token budget, optionally summarizing older ones.
+func trimMessages(messages []Message, budget int) ([]Message, error) {
+	if len(messages) == 0 {
+		return messages, nil
+	}
+	// Keep system message and last user/assistant messages as many as fit.
+	// We'll try to include a summary of older messages if necessary.
+	systemMsgs := []Message{}
+	var nonSystem []Message
+	for _, m := range messages {
+		if m.Role == "system" {
+			systemMsgs = append(systemMsgs, m)
+		} else {
+			nonSystem = append(nonSystem, m)
+		}
+	}
+
+	// Always keep system messages (assume they are small)
+	currentTokens := messagesTokenCount(systemMsgs)
+	if currentTokens > budget {
+		// Even system messages exceed budget; drop oldest system messages except the first?
+		// We'll just keep first system message and drop rest.
+		systemMsgs = systemMsgs[:1]
+		currentTokens = messagesTokenCount(systemMsgs)
+	}
+
+	// Add non‑system messages from the end until budget exceeded
+	kept := []Message{}
+	for i := len(nonSystem) - 1; i >= 0; i-- {
+		t := estimateTokens(nonSystem[i].Content) + 4
+		if currentTokens+t > budget {
+			break
+		}
+		kept = append([]Message{nonSystem[i]}, kept...) // prepend
+		currentTokens += t
+	}
+
+	// If there are older messages not kept, summarize them and add as system
+	if len(kept) < len(nonSystem) {
+		older := nonSystem[:len(nonSystem)-len(kept)]
+		summary, err := summarizeMessages(older)
+		if err != nil {
+			// Fallback: just add a note
+			summary = "Earlier conversation was truncated due to token limits."
+		}
+		systemMsgs = append(systemMsgs, Message{Role: "system", Content: "Summary of earlier conversation:\n" + summary})
+	}
+
+	result := append(systemMsgs, kept...)
+	return result, nil
+}
+
 // ---------- Chat Execution ----------
 func handleChat(input string) {
+	// Build messages with token budget
 	messages := buildMessages(input)
 	if currentMode == "cli" {
 		runAgentLoop(messages)
 		return
 	}
-	reply := streamResponse(messages)
-	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: reply})
-	persistSession()
+	streamResponse(messages)
+	// Persist session after each turn
+	saveCurrentSession()
 }
 
-const systemPromptBase = `You are NootyCLI, an autonomous agentic terminal AI assistant.
+func buildMessages(userInput string) []Message {
+	var msgs []Message
+	sysPrompt := `You are NootyCLI, an autonomous agentic terminal AI assistant.
 
 When in CHAT mode: Provide concise, expert terminal and software engineering responses.
 
 When in CLI mode: You act as an autonomous workspace agent.
-To execute tools, reply using one or more lines of this exact syntax:
+You may issue one or more tool calls per response. For each tool call, use the following syntax on a separate line:
 TOOL: tool_name key1="value1" key2="value2"
-
-You MAY issue multiple TOOL: lines in a single reply when the actions are
-independent of each other (for example several read_file calls, or a
-read_file plus a git_status). Independent read-only tools will be executed
-in parallel. If a later tool call depends on the result of an earlier one,
-only issue the first one and wait for its output.
 
 Available Workspace Tools:
 - list_files (path="relative_path")
@@ -692,10 +737,7 @@ Available Workspace Tools:
 - read_file (path="relative_path")
 - write_file (path="relative_path", content="full_content")
 - create_file (path="relative_path", content="initial_content")
-- patch_file (path="relative_path", search="exact_text_to_find", replace="replacement_text")
-  Use patch_file instead of write_file whenever you are changing part of an
-  existing file — it is faster and cheaper than rewriting the whole file.
-  "search" must match exactly once in the file.
+- patch_file (path="relative_path", search="exact_text", replace="new_text", count="optional")
 - delete_file (path="relative_path")
 - search_code (query="text", path="relative_path")
 - file_info (path="relative_path")
@@ -703,11 +745,7 @@ Available Workspace Tools:
 - git_diff
 - run_command (command="shell_cmd", timeout="seconds")
 
-IMPORTANT: Use EXACT tool format shown above.`
-
-func buildMessages(userInput string) []Message {
-	var msgs []Message
-	sysPrompt := systemPromptBase
+IMPORTANT: Use EXACT tool format. You may output multiple TOOL lines in a single response. Each line must start with "TOOL:".`
 
 	relevant := getRelevantMemories(userInput)
 	if len(relevant) > 0 {
@@ -718,92 +756,28 @@ func buildMessages(userInput string) []Message {
 	}
 
 	msgs = append(msgs, Message{Role: "system", Content: sysPrompt})
-	msgs = append(msgs, budgetHistory(sessionMessages, tokenBudget)...)
 
+	// Add existing session messages
+	msgs = append(msgs, sessionMessages...)
+
+	// Add new user message
 	userMsg := Message{Role: "user", Content: userInput}
 	msgs = append(msgs, userMsg)
-	sessionMessages = append(sessionMessages, userMsg)
-	persistSession()
 
-	return msgs
-}
-
-// ---------- Context Management (token-budget aware) ----------
-
-// estimateTokens is a cheap heuristic: ~4 chars per token, no real tokenizer needed.
-func estimateTokens(s string) int {
-	n := len(s) / 4
-	if n < 1 {
-		n = 1
-	}
-	return n
-}
-
-func messageTokens(m Message) int {
-	return estimateTokens(m.Content) + 4 // small per-message overhead
-}
-
-// budgetHistory returns as much recent history as fits in the token budget.
-// Anything older that doesn't fit is collapsed into a single synthetic
-// "summary" system-ish message (role=user, clearly marked) instead of being
-// silently dropped, so the model keeps some notion of earlier context.
-func budgetHistory(history []Message, budget int) []Message {
-	if len(history) == 0 {
-		return nil
-	}
-
-	used := 0
-	cut := len(history)
-	for i := len(history) - 1; i >= 0; i-- {
-		t := messageTokens(history[i])
-		if used+t > budget {
-			cut = i + 1
-			break
+	// Truncate to token budget
+	trimmed, err := trimMessages(msgs, maxContextTokens)
+	if err != nil {
+		// If summarization fails, fall back to last 10 messages
+		start := 0
+		if len(msgs) > 10 {
+			start = len(msgs) - 10
 		}
-		used += t
-		cut = i
+		trimmed = append([]Message{msgs[0]}, msgs[start:]...)
 	}
 
-	if cut == 0 {
-		return history
-	}
-
-	older := history[:cut]
-	recent := history[cut:]
-
-	summary := summarizeMessages(older)
-	if summary == "" {
-		return recent
-	}
-
-	summaryMsg := Message{
-		Role:    "user",
-		Content: "[Context summary of " + strconv.Itoa(len(older)) + " earlier turn(s), condensed to save space]\n" + summary,
-	}
-	out := make([]Message, 0, len(recent)+1)
-	out = append(out, summaryMsg)
-	out = append(out, recent...)
-	return out
-}
-
-// summarizeMessages produces a lightweight extractive summary: one short
-// line per message, truncated, rather than dropping the content entirely.
-func summarizeMessages(msgs []Message) string {
-	if len(msgs) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, m := range msgs {
-		line := strings.ReplaceAll(strings.TrimSpace(m.Content), "\n", " ")
-		if len(line) > 160 {
-			line = line[:160] + "…"
-		}
-		if line == "" {
-			continue
-		}
-		b.WriteString("- (" + m.Role + ") " + line + "\n")
-	}
-	return b.String()
+	// Update sessionMessages with trimmed version
+	sessionMessages = trimmed
+	return trimmed
 }
 
 func getRelevantMemories(query string) []Memory {
@@ -820,8 +794,7 @@ func getRelevantMemories(query string) []Memory {
 	return res
 }
 
-// streamResponse streams a chat completion to stdout and returns the full text.
-func streamResponse(messages []Message) string {
+func streamResponse(messages []Message) {
 	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: true}
 	jsonData, _ := json.Marshal(reqPayload)
 	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
@@ -833,14 +806,14 @@ func streamResponse(messages []Message) string {
 	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
 	if err != nil {
 		fmt.Printf("%s❌ Request error: %v%s\n", c(red), err, c(reset))
-		return ""
+		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Printf("%s❌ Provider Error %d: %s%s\n", c(red), resp.StatusCode, string(body), c(reset))
-		return ""
+		return
 	}
 
 	reader := bufio.NewReader(resp.Body)
@@ -871,67 +844,10 @@ func streamResponse(messages []Message) string {
 	}
 
 	fmt.Print(c(reset) + "\n\n")
-	return fullContent.String()
+	sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: fullContent.String()})
 }
 
-// ---------- Agentic Plan & Execute Loop ----------
-func runAgentLoop(messages []Message) {
-	planPrompt := append(append([]Message{}, messages...), Message{Role: "user", Content: "Provide a clear, numbered execution plan to fulfill this request."})
-	fmt.Print(c(yellow) + "🤔 Analyzing & planning action sequence...\n" + c(reset))
-
-	planText := streamResponse(planPrompt)
-	if planText == "" {
-		fmt.Printf("%s❌ Planning failed (empty response).%s\n", c(red), c(reset))
-		return
-	}
-
-	fmt.Print(c(bold) + "\nApprove plan execution? [Y/n]: " + c(reset))
-	reader := bufio.NewReader(os.Stdin)
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-	if confirm == "n" || confirm == "no" {
-		fmt.Println("🛑 Execution cancelled by user.")
-		return
-	}
-
-	msgs := append(append([]Message{}, messages...),
-		Message{Role: "assistant", Content: planText},
-		Message{Role: "user", Content: "Plan approved. Proceed step by step using TOOL commands. You may batch independent TOOL: calls in one reply."},
-	)
-
-	for i := 0; i < 10; i++ {
-		fmt.Print(c(dim) + "⏳ Thinking...\n" + c(reset))
-		respText := streamResponse(msgs)
-		if respText == "" {
-			fmt.Printf("%s❌ Agent Execution Error: empty model response%s\n", c(red), c(reset))
-			return
-		}
-
-		toolCalls := extractToolCalls(respText)
-		if len(toolCalls) == 0 {
-			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: respText})
-			persistSession()
-			return
-		}
-
-		results := executeToolCallsBatch(toolCalls)
-
-		var toolReport strings.Builder
-		for idx, tc := range toolCalls {
-			res := results[idx]
-			label := res.Output
-			if len(label) > 2500 {
-				label = label[:2500] + "\n... (output truncated)"
-			}
-			toolReport.WriteString(fmt.Sprintf("Tool '%s' output:\n%s\n\n", tc.Name, label))
-		}
-
-		msgs = append(msgs, Message{Role: "assistant", Content: respText}, Message{Role: "user", Content: toolReport.String()})
-	}
-	fmt.Printf("%s⚠️ Agent loop step limit reached (10 steps).%s\n", c(yellow), c(reset))
-}
-
-// getModelResponseText performs a non-streaming completion (used for legacy/internal calls).
+// getModelResponseText now supports streaming optionally? We'll keep non‑streaming for planning/summarization.
 func getModelResponseText(messages []Message) (string, error) {
 	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: false}
 	jsonData, _ := json.Marshal(reqPayload)
@@ -970,29 +886,244 @@ func getModelResponseText(messages []Message) (string, error) {
 	return result.Choices[0].Message.Content, nil
 }
 
-// ---------- Tool-call parsing (supports multiple TOOL: lines per reply) ----------
+// ---------- Agentic Plan & Execute Loop (parallel) ----------
+func runAgentLoop(messages []Message) {
+	// Plan step (streamed)
+	planPrompt := append(messages, Message{Role: "user", Content: "Provide a clear, numbered execution plan to fulfill this request."})
+	fmt.Print(c(yellow) + "🤔 Analyzing & planning action sequence... " + c(reset))
 
-func extractToolCalls(text string) []*ToolCall {
-	var calls []*ToolCall
-	lines := strings.Split(text, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "TOOL:") || strings.HasPrefix(trimmed, "TOOL：") {
-			if tc := parseToolLine(trimmed); tc != nil {
-				calls = append(calls, tc)
+	planText, err := getModelResponseText(planPrompt)
+	if err != nil {
+		fmt.Printf("%s❌ Planning failed: %v%s\n", c(red), err, c(reset))
+		return
+	}
+
+	fmt.Println("\n" + c(cyan) + c(bold) + "📋 Proposed Execution Plan:" + c(reset))
+	fmt.Println(c(cyan) + planText + c(reset) + "\n")
+
+	fmt.Print(c(bold) + "Approve plan execution? [Y/n]: " + c(reset))
+	reader := bufio.NewReader(os.Stdin)
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm == "n" || confirm == "no" {
+		fmt.Println("🛑 Execution cancelled by user.")
+		return
+	}
+
+	msgs := append(messages,
+		Message{Role: "assistant", Content: planText},
+		Message{Role: "user", Content: "Plan approved. Proceed step by step using TOOL commands."},
+	)
+
+	for step := 0; step < 10; step++ {
+		// Stream model response for this step
+		fmt.Print(c(magenta) + "\n🤖 Nooty > " + c(reset))
+		respText, err := streamModelResponseText(msgs) // returns full text after streaming
+		if err != nil {
+			fmt.Printf("%s❌ Agent Execution Error: %v%s\n", c(red), err, c(reset))
+			return
+		}
+
+		// Extract all tool calls (could be multiple)
+		toolCalls := extractAllToolCalls(respText)
+		if len(toolCalls) == 0 {
+			fmt.Println(c(green) + respText + c(reset))
+			sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: respText})
+			return
+		}
+
+		fmt.Printf("\n%s🔧 Agent Actions (step %d):%s\n", c(bold)+c(yellow), step+1, c(reset))
+		for i, tc := range toolCalls {
+			fmt.Printf("  %d. %s", i+1, tc.Name)
+			if len(tc.Args) > 0 {
+				fmt.Print(" (")
+				keys := make([]string, 0, len(tc.Args))
+				for k := range tc.Args {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					fmt.Printf("%s=%q ", k, tc.Args[k])
+				}
+				fmt.Print(")")
+			}
+			fmt.Println()
+		}
+
+		// Execute tools in parallel if possible (all safe ones run concurrently)
+		type toolResult struct {
+			Index  int
+			Result string
+			Error  error
+		}
+		results := make([]toolResult, len(toolCalls))
+		var wg sync.WaitGroup
+
+		// Determine which tools need approval; we'll ask before launching any
+		// For simplicity: ask approval for all first, then execute parallel.
+		// But we need to handle approval per tool. We'll collect all needed approvals.
+		approvalNeeded := false
+		for _, tc := range toolCalls {
+			if toolNeedsApproval(tc.Name) {
+				approvalNeeded = true
+				break
+			}
+		}
+		if approvalNeeded {
+			fmt.Print(c(yellow) + "⚠️ Some actions require confirmation. Approve all? [Y/n]: " + c(reset))
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(strings.ToLower(confirm))
+			if confirm == "n" || confirm == "no" {
+				// Deny all
+				for i := range toolCalls {
+					results[i] = toolResult{Index: i, Result: "Denied by user safety policy.", Error: nil}
+				}
+			} else {
+				// Approve all, but for delete_file we need special confirmation
+				for i, tc := range toolCalls {
+					if tc.Name == "delete_file" {
+						fmt.Printf("%s⚠️ Delete file %s? Type DELETE to confirm: %s", c(red), tc.Args["path"], c(reset))
+						confirmDelete, _ := reader.ReadString('\n')
+						if strings.TrimSpace(confirmDelete) != "DELETE" {
+							results[i] = toolResult{Index: i, Result: "Denied by user.", Error: nil}
+							continue
+						}
+					}
+					// Approved, will execute later
+				}
+			}
+		}
+
+		// Launch parallel execution for those not pre‑denied
+		for i, tc := range toolCalls {
+			if results[i].Result != "" {
+				// Already denied
+				continue
+			}
+			wg.Add(1)
+			go func(idx int, tc ToolCall) {
+				defer wg.Done()
+				res, err := runTool(tc.Name, tc.Args)
+				results[idx] = toolResult{Index: idx, Result: res, Error: err}
+			}(i, tc)
+		}
+		wg.Wait()
+
+		// Collect results into a single message for model
+		var resultStr strings.Builder
+		for i, res := range results {
+			resultStr.WriteString(fmt.Sprintf("Tool %d (%s):\n", i+1, toolCalls[i].Name))
+			if res.Error != nil {
+				resultStr.WriteString(fmt.Sprintf("Error: %v\n", res.Error))
+			} else {
+				// Truncate long outputs
+				out := res.Result
+				if len(out) > 2500 {
+					out = out[:2500] + "\n... (output truncated)"
+				}
+				resultStr.WriteString(out)
+			}
+			resultStr.WriteString("\n\n")
+		}
+
+		fmt.Printf("%s📄 Tool Outputs:%s\n%s\n", c(dim), c(reset), resultStr.String())
+
+		// Add assistant response with tool calls and results to message history
+		msgs = append(msgs, Message{Role: "assistant", Content: respText})
+		msgs = append(msgs, Message{Role: "user", Content: resultStr.String()})
+
+		// Also update sessionMessages with the assistant's tool call response
+		sessionMessages = append(sessionMessages, Message{Role: "assistant", Content: respText})
+	}
+
+	fmt.Printf("%s⚠️ Agent loop step limit reached (10 steps).%s\n", c(yellow), c(reset))
+}
+
+func toolNeedsApproval(name string) bool {
+	switch name {
+	case "list_files", "tree", "read_file", "search_code", "file_info", "git_status", "git_diff":
+		return false
+	default:
+		return true // write, create, patch, delete, run_command
+	}
+}
+
+// streamModelResponseText streams the model response to stdout and returns the full text.
+func streamModelResponseText(messages []Message) (string, error) {
+	reqPayload := ChatRequest{Model: config.Model, Messages: messages, Stream: true}
+	jsonData, _ := json.Marshal(reqPayload)
+	endpoint := strings.TrimRight(config.ProviderEndpoint, "/") + "/chat/completions"
+	headers := map[string]string{"Content-Type": "application/json"}
+	if config.APIKey != "" {
+		headers["Authorization"] = "Bearer " + config.APIKey
+	}
+
+	resp, err := doWithFallback("POST", endpoint, jsonData, headers)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	var fullContent strings.Builder
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk ChatStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			for _, choice := range chunk.Choices {
+				fmt.Print(choice.Delta.Content)
+				fullContent.WriteString(choice.Delta.Content)
 			}
 		}
 	}
-	if len(calls) > 0 {
-		return calls
-	}
+	fmt.Println()
+	return fullContent.String(), nil
+}
 
-	re := regexp.MustCompile(`(?i)TOOL:\s*(\w+)\s+(.*)`)
-	matches := re.FindStringSubmatch(text)
-	if len(matches) >= 3 {
-		return []*ToolCall{parseToolArgs(matches[1], matches[2])}
+func extractAllToolCalls(text string) []ToolCall {
+	var calls []ToolCall
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "TOOL:") || strings.HasPrefix(line, "TOOL：") {
+			tc := parseToolLine(line)
+			if tc != nil {
+				calls = append(calls, *tc)
+			}
+		}
 	}
-	return nil
+	// If none found via line, try regex over whole text
+	if len(calls) == 0 {
+		re := regexp.MustCompile(`(?i)TOOL:\s*(\w+)\s+([^\n]+)`)
+		matches := re.FindAllStringSubmatch(text, -1)
+		for _, match := range matches {
+			if len(match) >= 3 {
+				tc := parseToolArgs(match[1], match[2])
+				if tc != nil {
+					calls = append(calls, *tc)
+				}
+			}
+		}
+	}
+	return calls
 }
 
 func parseToolLine(line string) *ToolCall {
@@ -1001,7 +1132,7 @@ func parseToolLine(line string) *ToolCall {
 	line = strings.TrimSpace(line)
 
 	parts := strings.SplitN(line, " ", 2)
-	if len(parts) < 1 || parts[0] == "" {
+	if len(parts) < 1 {
 		return nil
 	}
 	name := parts[0]
@@ -1037,170 +1168,7 @@ func parseToolArgs(name, argsStr string) *ToolCall {
 	return &ToolCall{Name: name, Args: args}
 }
 
-// ---------- Batched / parallel tool execution ----------
-
-type toolResult struct {
-	Output   string
-	Approved bool
-}
-
-// readOnlyTools never mutate state and are safe to run concurrently.
-var readOnlyTools = map[string]bool{
-	"list_files": true, "tree": true, "read_file": true,
-	"search_code": true, "file_info": true, "git_status": true, "git_diff": true,
-}
-
-// executeToolCallsBatch runs a slice of tool calls. Consecutive read-only
-// calls are executed in parallel via goroutines; any call that mutates state
-// (write_file, patch_file, create_file, delete_file, run_command) is executed
-// serially and safely, in order, since later calls may depend on it.
-func executeToolCallsBatch(calls []*ToolCall) []toolResult {
-	results := make([]toolResult, len(calls))
-
-	i := 0
-	for i < len(calls) {
-		if readOnlyTools[calls[i].Name] {
-			// gather a contiguous run of read-only calls and run them in parallel
-			j := i
-			for j < len(calls) && readOnlyTools[calls[j].Name] {
-				j++
-			}
-			var wg sync.WaitGroup
-			for k := i; k < j; k++ {
-				wg.Add(1)
-				go func(idx int) {
-					defer wg.Done()
-					printToolHeader(idx+1, calls[idx])
-					out, err := runTool(calls[idx].Name, calls[idx].Args)
-					if err != nil {
-						results[idx] = toolResult{Output: fmt.Sprintf("Tool Error: %v", err), Approved: true}
-						return
-					}
-					results[idx] = toolResult{Output: out, Approved: true}
-				}(k)
-			}
-			wg.Wait()
-			for k := i; k < j; k++ {
-				fmt.Printf("%s📄 [%s] Output:%s\n%s\n", c(dim), calls[k].Name, c(reset), truncateForDisplay(results[k].Output))
-			}
-			i = j
-			continue
-		}
-
-		// mutating / sequential tool
-		printToolHeader(i+1, calls[i])
-		out, approved := executeAgentTool(calls[i])
-		results[i] = toolResult{Output: out, Approved: approved}
-		fmt.Printf("%s📄 [%s] Output:%s\n%s\n", c(dim), calls[i].Name, c(reset), truncateForDisplay(out))
-		i++
-	}
-
-	return results
-}
-
-func printToolHeader(step int, tc *ToolCall) {
-	fmt.Printf("\n%s🔧 Agent Action [%d]: %s%s\n", c(bold)+c(yellow), step, tc.Name, c(reset))
-	for k, v := range tc.Args {
-		disp := v
-		if len(disp) > 120 {
-			disp = disp[:120] + "…"
-		}
-		fmt.Printf("   %s%s%s: %s\n", c(dim), k, c(reset), disp)
-	}
-}
-
-func truncateForDisplay(s string) string {
-	if len(s) > 2500 {
-		return s[:2500] + "\n... (output truncated)"
-	}
-	return s
-}
-
-func executeAgentTool(tc *ToolCall) (string, bool) {
-	needsApproval := true
-	switch tc.Name {
-	case "list_files", "tree", "read_file", "search_code", "file_info", "git_status", "git_diff":
-		needsApproval = false
-	}
-
-	if needsApproval {
-		if tc.Name == "delete_file" {
-			fmt.Printf("%s⚠️ SAFETY WARNING: %s will permanently delete target file!%s\n", c(red), tc.Name, c(reset))
-			fmt.Print("Type DELETE to confirm action: ")
-			reader := bufio.NewReader(os.Stdin)
-			confirm, _ := reader.ReadString('\n')
-			if strings.TrimSpace(confirm) != "DELETE" {
-				return "Operation aborted by safety check.", false
-			}
-		} else {
-			fmt.Print("Confirm execution? [Y/n]: ")
-			reader := bufio.NewReader(os.Stdin)
-			confirm, _ := reader.ReadString('\n')
-			confirm = strings.TrimSpace(strings.ToLower(confirm))
-			if confirm == "n" || confirm == "no" {
-				return "Operation cancelled by user.", false
-			}
-		}
-	}
-
-	result, err := runTool(tc.Name, tc.Args)
-	if err != nil {
-		return fmt.Sprintf("Tool Error: %v", err), true
-	}
-	return result, true
-}
-
-// ---------- .gitignore-aware walking ----------
-
-// ignoreDefaults are directory/file names always skipped during tree/search_code walks.
-var ignoreDefaults = map[string]bool{
-	".git": true, "node_modules": true, "vendor": true, ".hg": true,
-	".svn": true, ".idea": true, ".vscode": true, "dist": true,
-	"build": true, "__pycache__": true, ".venv": true, "venv": true,
-	".DS_Store": true,
-}
-
-// loadGitignore reads a .gitignore at the workspace root (best-effort, simple
-// glob-style matching — not a full gitignore spec implementation) and returns
-// a matcher function.
-func loadGitignorePatterns(root string) []string {
-	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-	if err != nil {
-		return nil
-	}
-	var patterns []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		patterns = append(patterns, strings.Trim(line, "/"))
-	}
-	return patterns
-}
-
-func matchesGitignore(name string, patterns []string) bool {
-	for _, p := range patterns {
-		if p == "" {
-			continue
-		}
-		if ok, _ := filepath.Match(p, name); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func shouldSkipEntry(name string, patterns []string) bool {
-	if ignoreDefaults[name] {
-		return true
-	}
-	if strings.HasPrefix(name, ".") && name != "." && name != ".." {
-		return true
-	}
-	return matchesGitignore(name, patterns)
-}
-
+// ---------- Tool Execution ----------
 func runTool(name string, args map[string]string) (string, error) {
 	switch name {
 	case "list_files":
@@ -1212,12 +1180,8 @@ func runTool(name string, args map[string]string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		patterns := loadGitignorePatterns(workspace)
 		var names []string
 		for _, e := range entries {
-			if shouldSkipEntry(e.Name(), patterns) {
-				continue
-			}
 			if e.IsDir() {
 				names = append(names, e.Name()+"/")
 			} else {
@@ -1225,7 +1189,7 @@ func runTool(name string, args map[string]string) (string, error) {
 			}
 		}
 		if len(names) == 0 {
-			return "(directory empty or fully ignored)", nil
+			return "(directory empty)", nil
 		}
 		return strings.Join(names, "\n"), nil
 
@@ -1234,8 +1198,7 @@ func runTool(name string, args map[string]string) (string, error) {
 		if p, ok := args["path"]; ok && p != "" && p != "." {
 			path = safeJoin(workspace, p)
 		}
-		patterns := loadGitignorePatterns(workspace)
-		return dirTree(path, "", patterns), nil
+		return dirTree(path, ""), nil
 
 	case "read_file":
 		path := safeJoin(workspace, args["path"])
@@ -1248,48 +1211,55 @@ func runTool(name string, args map[string]string) (string, error) {
 	case "write_file", "create_file":
 		path := safeJoin(workspace, args["path"])
 		content := args["content"]
-		saveCheckpoint(name, args["path"], path)
+		// Checkpoint before writing
+		backupFile(path)
 		_ = os.MkdirAll(filepath.Dir(path), 0755)
 		err := os.WriteFile(path, []byte(content), 0644)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("✅ File saved (%d bytes): %s  [checkpoint saved — use /undo to revert]", len(content), args["path"]), nil
+		return fmt.Sprintf("✅ File saved (%d bytes): %s", len(content), args["path"]), nil
 
 	case "patch_file":
 		path := safeJoin(workspace, args["path"])
 		search := args["search"]
 		replace := args["replace"]
-		if search == "" {
-			return "", fmt.Errorf("patch_file requires a non-empty 'search' argument")
+		countStr := args["count"]
+		count := 1 // default replace first occurrence, or -1 for all if count absent?
+		if countStr != "" {
+			if n, err := strconv.Atoi(countStr); err == nil {
+				count = n
+			}
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", err
 		}
 		original := string(data)
-		count := strings.Count(original, search)
-		if count == 0 {
-			return "", fmt.Errorf("patch_file: search text not found in %s", args["path"])
+		if !strings.Contains(original, search) {
+			return "", fmt.Errorf("search string not found in file")
 		}
-		if count > 1 {
-			return "", fmt.Errorf("patch_file: search text matches %d times in %s; must match exactly once — provide more surrounding context", count, args["path"])
+		// Checkpoint
+		backupFile(path)
+		var newContent string
+		if count < 0 {
+			newContent = strings.ReplaceAll(original, search, replace)
+		} else {
+			newContent = strings.Replace(original, search, replace, count)
 		}
-		saveCheckpoint("patch_file", args["path"], path)
-		updated := strings.Replace(original, search, replace, 1)
-		if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
+		err = os.WriteFile(path, []byte(newContent), 0644)
+		if err != nil {
 			return "", err
 		}
-		delta := len(updated) - len(original)
-		return fmt.Sprintf("✅ Patched %s (%+d bytes)  [checkpoint saved — use /undo to revert]", args["path"], delta), nil
+		return fmt.Sprintf("✅ File patched: %s", args["path"]), nil
 
 	case "delete_file":
 		path := safeJoin(workspace, args["path"])
-		saveCheckpoint("delete_file", args["path"], path)
+		backupFile(path)
 		if err := os.Remove(path); err != nil {
 			return "", err
 		}
-		return "✅ File removed: " + args["path"] + "  [checkpoint saved — use /undo to revert]", nil
+		return "✅ File removed: " + args["path"], nil
 
 	case "search_code":
 		query := args["query"]
@@ -1297,7 +1267,50 @@ func runTool(name string, args map[string]string) (string, error) {
 		if s, ok := args["path"]; ok && s != "" {
 			scope = safeJoin(workspace, s)
 		}
-		return searchCodeStreaming(scope, query), nil
+		var results []string
+		err := filepath.Walk(scope, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() {
+				if shouldSkipDir(info.Name()) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			// Skip hidden files and very large files
+			if strings.HasPrefix(info.Name(), ".") || info.Size() > 1_000_000 {
+				return nil
+			}
+			// Use bufio.Scanner to read line by line
+			file, err := os.Open(p)
+			if err != nil {
+				return nil
+			}
+			defer file.Close()
+			scanner := bufio.NewScanner(file)
+			lineNum := 0
+			found := false
+			for scanner.Scan() {
+				lineNum++
+				if strings.Contains(scanner.Text(), query) {
+					found = true
+					break
+				}
+			}
+			if found {
+				rel, _ := filepath.Rel(workspace, p)
+				results = append(results, rel)
+			}
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(results) == 0 {
+			return "No matches found.", nil
+		}
+		return strings.Join(results, "\n"), nil
 
 	case "file_info":
 		path := safeJoin(workspace, args["path"])
@@ -1334,163 +1347,92 @@ func runTool(name string, args map[string]string) (string, error) {
 		return s, nil
 
 	case "run_command":
-		return runCommandStreaming(args)
+		cmdStr := args["command"]
+		timeout := 60
+		if t, ok := args["timeout"]; ok {
+			_, _ = fmt.Sscanf(t, "%d", &timeout)
+		}
+
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("cmd", "/C", cmdStr)
+		} else {
+			cmd = exec.Command("sh", "-c", cmdStr)
+		}
+		cmd.Dir = workspace
+
+		// Stream output to user AND capture to buffer
+		var outBuf, errBuf bytes.Buffer
+		cmd.Stdout = io.MultiWriter(os.Stdout, &outBuf)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
+
+		if err := cmd.Start(); err != nil {
+			return "", err
+		}
+
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+
+		select {
+		case err := <-done:
+			out := outBuf.String()
+			if errBuf.Len() > 0 {
+				out += "\n[stderr]\n" + errBuf.String()
+			}
+			if err != nil {
+				return out + fmt.Sprintf("\nExit status: %v", err), nil
+			}
+			if out == "" {
+				out = "(command executed successfully with no output)"
+			}
+			return out, nil
+		case <-time.After(time.Duration(timeout) * time.Second):
+			_ = cmd.Process.Kill()
+			return "", fmt.Errorf("execution timed out (%d sec)", timeout)
+		}
 	}
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
-// searchCodeStreaming performs a line-by-line, low-memory grep-style search
-// (bufio.Scanner instead of reading whole files into memory) and skips
-// ignored directories/files.
-func searchCodeStreaming(scope, query string) string {
-	patterns := loadGitignorePatterns(workspace)
-	var results []string
-
-	_ = filepath.Walk(scope, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		name := info.Name()
-		if info.IsDir() {
-			if p != scope && shouldSkipEntry(name, patterns) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if shouldSkipEntry(name, patterns) {
-			return nil
-		}
-		if info.Size() > 5_000_000 {
-			return nil
-		}
-
-		f, err := os.Open(p)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		lineNo := 0
-		matched := false
-		for scanner.Scan() {
-			lineNo++
-			if strings.Contains(scanner.Text(), query) {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			rel, _ := filepath.Rel(workspace, p)
-			results = append(results, fmt.Sprintf("%s:%d", rel, lineNo))
-		}
-		return nil
-	})
-
-	if len(results) == 0 {
-		return "No matches found."
+func shouldSkipDir(name string) bool {
+	skipDirs := map[string]bool{
+		".git":         true,
+		".svn":         true,
+		".hg":          true,
+		"node_modules": true,
+		"vendor":       true,
+		".venv":        true,
+		"venv":         true,
+		"__pycache__":  true,
+		".idea":        true,
+		".vscode":      true,
 	}
-	return strings.Join(results, "\n")
+	return skipDirs[name]
 }
 
-// runCommandStreaming runs a shell command, streaming stdout/stderr to the
-// terminal live (useful for long build/test commands) while also capturing
-// the output to return to the model.
-func runCommandStreaming(args map[string]string) (string, error) {
-	cmdStr := args["command"]
-	timeout := 60
-	if t, ok := args["timeout"]; ok {
-		_, _ = fmt.Sscanf(t, "%d", &timeout)
-	}
-
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/C", cmdStr)
-	} else {
-		cmd = exec.Command("sh", "-c", cmdStr)
-	}
-	cmd.Dir = workspace
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", err
-	}
-
-	var captured bytes.Buffer
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	streamCopy := func(prefix string, r io.Reader) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Printf("%s%s│%s %s\n", c(dim), prefix, c(reset), line)
-			mu.Lock()
-			captured.WriteString(line)
-			captured.WriteString("\n")
-			mu.Unlock()
-		}
-	}
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	wg.Add(2)
-	go streamCopy("out", stdoutPipe)
-	go streamCopy("err", stderrPipe)
-
-	done := make(chan error, 1)
-	go func() {
-		wg.Wait()
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		out := captured.String()
-		if err != nil {
-			return out + fmt.Sprintf("\nExit status: %v", err), nil
-		}
-		if out == "" {
-			out = "(command executed successfully with no output)"
-		}
-		return out, nil
-	case <-time.After(time.Duration(timeout) * time.Second):
-		_ = cmd.Process.Kill()
-		return "", fmt.Errorf("execution timed out (%d sec)", timeout)
-	}
-}
-
-func dirTree(root, indent string, patterns []string) string {
+func dirTree(root, indent string) string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err.Error()
 	}
-	var filtered []os.DirEntry
-	for _, e := range entries {
-		if !shouldSkipEntry(e.Name(), patterns) {
-			filtered = append(filtered, e)
-		}
-	}
 	var out string
-	for i, e := range filtered {
+	for i, e := range entries {
+		if shouldSkipDir(e.Name()) && e.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), ".") && e.IsDir() {
+			// still skip hidden dirs
+			continue
+		}
 		prefix := indent + "├── "
 		childIndent := indent + "│   "
-		if i == len(filtered)-1 {
+		if i == len(entries)-1 {
 			prefix = indent + "└── "
 			childIndent = indent + "    "
 		}
 		out += prefix + e.Name() + "\n"
 		if e.IsDir() {
-			out += dirTree(filepath.Join(root, e.Name()), childIndent, patterns)
+			out += dirTree(filepath.Join(root, e.Name()), childIndent)
 		}
 	}
 	return out
@@ -1505,98 +1447,120 @@ func safeJoin(base, rel string) string {
 	return abs
 }
 
-// ---------- Checkpoint / Undo System ----------
-
-func checkpointIndexFile() string {
-	return filepath.Join(checkpointsDir, "index.json")
-}
-
-func loadCheckpoints() []Checkpoint {
-	data, err := os.ReadFile(checkpointIndexFile())
-	if err != nil {
-		return nil
-	}
-	var list []Checkpoint
-	_ = json.Unmarshal(data, &list)
-	return list
-}
-
-func saveCheckpoints(list []Checkpoint) {
-	data, _ := json.MarshalIndent(list, "", "  ")
-	_ = os.WriteFile(checkpointIndexFile(), data, 0600)
-}
-
-// saveCheckpoint snapshots the pre-mutation state of a file before
-// write_file / patch_file / delete_file / create_file touches it.
-func saveCheckpoint(tool, relPath, absPath string) {
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
-	existed := false
-	backupRel := ""
-
-	if data, err := os.ReadFile(absPath); err == nil {
-		existed = true
-		backupRel = id + ".bak"
-		_ = os.WriteFile(filepath.Join(checkpointsDir, backupRel), data, 0600)
-	}
-
-	cp := Checkpoint{
-		ID:        id,
-		Timestamp: time.Now(),
-		Tool:      tool,
-		RelPath:   relPath,
-		Existed:   existed,
-		BackupRel: backupRel,
-	}
-
-	list := loadCheckpoints()
-	list = append(list, cp)
-	// keep only the most recent 50 checkpoints to bound disk usage
-	if len(list) > 50 {
-		removed := list[:len(list)-50]
-		list = list[len(list)-50:]
-		for _, r := range removed {
-			if r.BackupRel != "" {
-				_ = os.Remove(filepath.Join(checkpointsDir, r.BackupRel))
-			}
+// ---------- Checkpoint & Undo ----------
+func backupFile(path string) {
+	checkpointMu.Lock()
+	defer checkpointMu.Unlock()
+	if _, err := os.Stat(path); err == nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return
+		}
+		rel, _ := filepath.Rel(workspace, path)
+		timestamp := time.Now().Format("20060102_150405.000000000")
+		backupPath := filepath.Join(checkpointDir, fmt.Sprintf("%s_%s.bak", strings.ReplaceAll(rel, "/", "_"), timestamp))
+		if err := os.WriteFile(backupPath, data, 0644); err == nil {
+			checkpointStack = append(checkpointStack, backupPath)
 		}
 	}
-	saveCheckpoints(list)
 }
 
-func handleUndo() {
-	list := loadCheckpoints()
-	if len(list) == 0 {
-		fmt.Println(c(yellow) + "⚠️ No checkpoints available to undo." + c(reset))
+func undoLastCheckpoint() {
+	checkpointMu.Lock()
+	defer checkpointMu.Unlock()
+	if len(checkpointStack) == 0 {
+		fmt.Println("No checkpoints available to undo.")
 		return
 	}
-	last := list[len(list)-1]
-	absPath := safeJoin(workspace, last.RelPath)
+	last := checkpointStack[len(checkpointStack)-1]
+	checkpointStack = checkpointStack[:len(checkpointStack)-1]
 
-	if last.Existed {
-		data, err := os.ReadFile(filepath.Join(checkpointsDir, last.BackupRel))
+	// Restore file
+	// backup filename format: relpath_escaped_20060102_150405.bak
+	// We need original path: remove timestamp suffix and replace '_' with '/'
+	base := filepath.Base(last)
+	// remove .bak
+	base = strings.TrimSuffix(base, ".bak")
+	// Split at last "_" (timestamp)
+	idx := strings.LastIndex(base, "_")
+	if idx == -1 {
+		fmt.Println("Invalid checkpoint file name.")
+		return
+	}
+	origRel := base[:idx]
+	origRel = strings.ReplaceAll(origRel, "_", "/")
+	origPath := safeJoin(workspace, origRel)
+
+	// Read backup and restore
+	data, err := os.ReadFile(last)
+	if err != nil {
+		fmt.Printf("Failed to read backup: %v\n", err)
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(origPath), 0755)
+	if err := os.WriteFile(origPath, data, 0644); err != nil {
+		fmt.Printf("Failed to restore file: %v\n", err)
+		return
+	}
+	_ = os.Remove(last)
+	fmt.Printf("✅ Restored %s from checkpoint.\n", origRel)
+}
+
+// ---------- Session Persistence ----------
+func saveCurrentSession() {
+	if len(sessionMessages) == 0 {
+		return
+	}
+	session := Session{
+		ID:        time.Now().Format("20060102_150405.000000000"),
+		Started:   time.Now(),
+		Updated:   time.Now(),
+		Messages:  sessionMessages,
+		Workspace: workspace,
+	}
+	data, _ := json.MarshalIndent(session, "", "  ")
+	filename := filepath.Join(chatDir, session.ID+".json")
+	_ = os.WriteFile(filename, data, 0600)
+}
+
+func listSessions() {
+	files, err := filepath.Glob(filepath.Join(chatDir, "*.json"))
+	if err != nil || len(files) == 0 {
+		fmt.Println("No saved sessions found.")
+		return
+	}
+	fmt.Println(c(bold) + "\n📂 Saved Sessions:" + c(reset))
+	for _, f := range files {
+		data, err := os.ReadFile(f)
 		if err != nil {
-			fmt.Printf("%s❌ Undo failed: could not read backup: %v%s\n", c(red), err, c(reset))
-			return
+			continue
 		}
-		if err := os.WriteFile(absPath, data, 0644); err != nil {
-			fmt.Printf("%s❌ Undo failed: could not restore file: %v%s\n", c(red), err, c(reset))
-			return
+		var s Session
+		if json.Unmarshal(data, &s) != nil {
+			continue
 		}
-		fmt.Printf("%s✅ Restored %s to its state before '%s' (checkpoint %s).%s\n", c(green), last.RelPath, last.Tool, last.ID, c(reset))
-	} else {
-		// file did not exist before the op (e.g. create_file) — undo means delete it
-		if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("%s❌ Undo failed: could not remove file: %v%s\n", c(red), err, c(reset))
-			return
-		}
-		fmt.Printf("%s✅ Removed %s (it was created by '%s', checkpoint %s).%s\n", c(green), last.RelPath, last.Tool, last.ID, c(reset))
+		fmt.Printf("  %s  (updated %s, workspace: %s)\n", s.ID, s.Updated.Format(time.RFC3339), formatPath(s.Workspace))
 	}
+	fmt.Println()
+}
 
-	if last.BackupRel != "" {
-		_ = os.Remove(filepath.Join(checkpointsDir, last.BackupRel))
+func resumeSession(id string) {
+	filename := filepath.Join(chatDir, id+".json")
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Printf("❌ Session %s not found.\n", id)
+		return
 	}
-	list = list[:len(list)-1]
-	saveCheckpoints(list)
+	var s Session
+	if err := json.Unmarshal(data, &s); err != nil {
+		fmt.Printf("❌ Failed to load session: %v\n", err)
+		return
+	}
+	sessionMessages = s.Messages
+	workspace = s.Workspace
+	config.Workspace = workspace
+	saveConfig()
+	fmt.Printf("✅ Resumed session %s (%d messages).\n", id, len(sessionMessages))
 }
 
 // ---------- Direct Shell Command Engine ----------
@@ -1663,8 +1627,6 @@ func runDoctor() {
 	fmt.Printf("• Active Model      : %s\n", config.Model)
 	fmt.Printf("• API Key           : %s\n", maskAPIKey(config.APIKey))
 	fmt.Printf("• Active Workspace  : %s\n", formatPath(workspace))
-	fmt.Printf("• Saved Sessions    : %d\n", len(listSessionFiles()))
-	fmt.Printf("• Checkpoints       : %d\n", len(loadCheckpoints()))
 	fmt.Print("• Provider Status   : ")
 
 	models, err := fetchAvailableModels()
@@ -1752,138 +1714,6 @@ func showHistory() {
 		fmt.Printf("%s%s:%s %s\n", c(bold), role, c(reset), msg.Content)
 	}
 	fmt.Println()
-}
-
-// ---------- Session Persistence ----------
-
-func newSessionID() string {
-	return time.Now().Format("20060102-150405")
-}
-
-func sessionFilePath(id string) string {
-	return filepath.Join(chatsDir, id+".json")
-}
-
-// persistSession writes the current in-memory session to disk. Cheap enough
-// to call after every turn; last-write-wins is fine for a single-user CLI.
-func persistSession() {
-	if len(sessionMessages) == 0 {
-		return
-	}
-	title := sessionTitle()
-	sess := Session{
-		ID:        currentSessionID,
-		Title:     title,
-		CreatedAt: sessionCreatedAt(),
-		UpdatedAt: time.Now(),
-		Messages:  sessionMessages,
-	}
-	data, err := json.MarshalIndent(sess, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(sessionFilePath(currentSessionID), data, 0600)
-}
-
-func sessionCreatedAt() time.Time {
-	if existing, err := os.ReadFile(sessionFilePath(currentSessionID)); err == nil {
-		var s Session
-		if json.Unmarshal(existing, &s) == nil && !s.CreatedAt.IsZero() {
-			return s.CreatedAt
-		}
-	}
-	return time.Now()
-}
-
-func sessionTitle() string {
-	for _, m := range sessionMessages {
-		if m.Role == "user" {
-			t := strings.TrimSpace(strings.ReplaceAll(m.Content, "\n", " "))
-			if len(t) > 60 {
-				t = t[:60] + "…"
-			}
-			return t
-		}
-	}
-	return "(empty session)"
-}
-
-func listSessionFiles() []string {
-	entries, err := os.ReadDir(chatsDir)
-	if err != nil {
-		return nil
-	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			files = append(files, e.Name())
-		}
-	}
-	sort.Strings(files)
-	return files
-}
-
-func listSessions() {
-	files := listSessionFiles()
-	if len(files) == 0 {
-		fmt.Println("📭 No saved sessions found.")
-		return
-	}
-	fmt.Println(c(bold) + "\n🗂  Saved Sessions:" + c(reset))
-	for _, f := range files {
-		data, err := os.ReadFile(filepath.Join(chatsDir, f))
-		if err != nil {
-			continue
-		}
-		var s Session
-		if json.Unmarshal(data, &s) != nil {
-			continue
-		}
-		marker := ""
-		if s.ID == currentSessionID {
-			marker = c(green) + " [current]" + c(reset)
-		}
-		fmt.Printf("  %s%-20s%s %s  (%d msgs, updated %s)%s\n",
-			c(cyan), s.ID, c(reset), s.Title, len(s.Messages), s.UpdatedAt.Format("2006-01-02 15:04"), marker)
-	}
-	fmt.Println(c(dim) + "\nUse /resume <id> or /resume latest to continue one." + c(reset))
-}
-
-func resumeSession(args []string) {
-	if len(args) == 0 {
-		fmt.Println("Usage: /resume <session-id> | /resume latest")
-		return
-	}
-	id := args[0]
-	files := listSessionFiles()
-	if len(files) == 0 {
-		fmt.Println("📭 No saved sessions found.")
-		return
-	}
-
-	var target string
-	if id == "latest" {
-		latest := files[len(files)-1]
-		target = strings.TrimSuffix(latest, ".json")
-	} else {
-		target = id
-	}
-
-	data, err := os.ReadFile(sessionFilePath(target))
-	if err != nil {
-		fmt.Printf("%s❌ Session '%s' not found.%s\n", c(red), target, c(reset))
-		return
-	}
-	var s Session
-	if err := json.Unmarshal(data, &s); err != nil {
-		fmt.Printf("%s❌ Failed to parse session '%s'.%s\n", c(red), target, c(reset))
-		return
-	}
-
-	persistSession() // save current before switching
-	sessionMessages = s.Messages
-	currentSessionID = s.ID
-	fmt.Printf("%s✅ Resumed session %s (%d messages) — \"%s\"%s\n", c(green), s.ID, len(s.Messages), s.Title, c(reset))
 }
 
 // ---------- Persistence Methods ----------
