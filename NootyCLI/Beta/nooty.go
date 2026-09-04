@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-// NootyCLI v0.3 — Radin Pro
+// NootyCLI v0.3 — Radin Pro (optimized)
 // Single-file, zero external dependencies.
 // Build: go build -ldflags="-s -w" -o nooty nooty.go
 
@@ -443,82 +443,125 @@ func getClient(dns string) *http.Client {
 	actual, _ := clientCache.LoadOrStore(dns, cl)
 	return actual.(*http.Client)
 }
+
+// raceDNS: measure DNS resolution latency for provider hostname using each DNS
 func raceDNS() {
-	type r struct {
-		i  int
-		ms time.Duration
-		ok bool
+	host := extractHost(config.ProviderEndpoint)
+	if host == "" {
+		activeDNSName = fallbackDNS[0].Name
+		return
 	}
-	ch := make(chan r, len(fallbackDNS))
-	for i, d := range fallbackDNS {
-		go func(i int, d DNSResolver) {
+	type result struct {
+		idx int
+		dur time.Duration
+		ok  bool
+	}
+	ch := make(chan result, len(fallbackDNS))
+	for i, dns := range fallbackDNS {
+		go func(i int, dns DNSResolver) {
 			start := time.Now()
 			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 			defer cancel()
-			url := config.ProviderEndpoint
-			if strings.TrimSpace(url) == "" {
-				url = "https://api.openai.com/v1"
-			}
-			req, _ := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(url, "/")+"/models", nil)
-			if config.APIKey != "" {
-				req.Header.Set("Authorization", "Bearer "+config.APIKey)
-			}
-			resp, err := getClient(d.Address).Do(req)
-			ok := err == nil && resp.StatusCode < 500
-			if resp != nil {
-				resp.Body.Close()
-			}
-			ch <- r{i, time.Since(start), ok}
-		}(i, d)
+			_, err := resolveHost(ctx, dns.Address, host)
+			ch <- result{i, time.Since(start), err == nil}
+		}(i, dns)
 	}
-	best := r{ms: time.Hour}
+	best := result{dur: time.Hour}
 	for range fallbackDNS {
-		x := <-ch
-		if x.ok && x.ms < best.ms {
-			best = x
+		r := <-ch
+		if r.ok && r.dur < best.dur {
+			best = r
 		}
 	}
-	if best.ms < time.Hour {
-		activeDNSName = fallbackDNS[best.i].Name
-		return
+	if best.dur < time.Hour {
+		activeDNSName = fallbackDNS[best.idx].Name
+	} else {
+		activeDNSName = fallbackDNS[0].Name
 	}
-	activeDNSName = fallbackDNS[0].Name
 }
-func doWithFallback(method, url string, body []byte, headers map[string]string) (*http.Response, error) {
-	var last error
-	for i, d := range fallbackDNS {
+func extractHost(endpoint string) string {
+	s := strings.TrimSpace(endpoint)
+	if s == "" {
+		return ""
+	}
+	if !strings.Contains(s, "://") {
+		s = "https://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+func resolveHost(ctx context.Context, dnsAddr, host string) ([]string, error) {
+	if dnsAddr == "" {
+		// use system resolver
+		return net.DefaultResolver.LookupHost(ctx, host)
+	}
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 1500 * time.Millisecond}
+			return d.DialContext(ctx, "udp", dnsAddr+":53")
+		},
+	}
+	return resolver.LookupHost(ctx, host)
+}
+
+// doRequest performs HTTP request with DNS fallback and retry logic for 429 and transient errors
+func doRequest(method, url string, body []byte, headers map[string]string, ctx context.Context) (*http.Response, error) {
+	var lastErr error
+	for _, dns := range fallbackDNS {
+		client := getClient(dns.Address)
 		for attempt := 0; attempt < 3; attempt++ {
-			var rdr io.Reader
+			var reqBody io.Reader
 			if body != nil {
-				rdr = bytes.NewReader(body)
+				reqBody = bytes.NewReader(body)
 			}
-			req, err := http.NewRequest(method, url, rdr)
+			req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 			if err != nil {
 				return nil, err
 			}
 			for k, v := range headers {
 				req.Header.Set(k, v)
 			}
-			resp, err := getClient(d.Address).Do(req)
-			if err == nil && resp.StatusCode < 500 && resp.StatusCode != 403 && resp.StatusCode != 451 {
-				activeDNSName = d.Name
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				time.Sleep(time.Duration(1<<attempt) * 200 * time.Millisecond)
+				continue
+			}
+			// Success or non-retryable status
+			if resp.StatusCode < 500 && resp.StatusCode != 429 && resp.StatusCode != 403 && resp.StatusCode != 451 {
+				activeDNSName = dns.Name
 				return resp, nil
 			}
-			if resp != nil {
-				last = fmt.Errorf("HTTP %d", resp.StatusCode)
+			// Handle 429 with retry-after
+			if resp.StatusCode == 429 {
+				lastErr = fmt.Errorf("HTTP 429")
+				retryAfter := resp.Header.Get("Retry-After")
+				if retryAfter != "" {
+					if seconds, err := strconv.Atoi(retryAfter); err == nil {
+						time.Sleep(time.Duration(seconds) * time.Second)
+					} else if t, err := http.ParseTime(retryAfter); err == nil {
+						time.Sleep(time.Until(t))
+					}
+				} else {
+					time.Sleep(time.Duration(1<<attempt) * time.Second)
+				}
 				resp.Body.Close()
-			} else {
-				last = err
+				continue
 			}
-			if attempt < 2 {
-				time.Sleep(time.Duration(1<<attempt) * 250 * time.Millisecond)
-			}
-		}
-		if i < len(fallbackDNS)-1 {
-			fmt.Printf("%s↻ switching DNS: %s → %s%s\n", c(yellow), d.Name, fallbackDNS[i+1].Name, c(reset))
+			// Other statuses: maybe not retryable but try next DNS
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			resp.Body.Close()
+			break // break inner loop to try next DNS
 		}
 	}
-	return nil, fmt.Errorf("network failed: %v", last)
+	if lastErr == nil {
+		lastErr = errors.New("network failed")
+	}
+	return nil, lastErr
 }
 
 // ---------------- Chat / Context ----------------
@@ -679,7 +722,7 @@ func streamResponse(messages []Message) {
 	start := time.Now()
 	payload := ChatRequest{Model: config.Model, Messages: messages, Stream: true}
 	data, _ := json.Marshal(payload)
-	resp, err := doWithFallback("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", data, commonHeaders())
+	resp, err := doRequest("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", data, commonHeaders(), context.Background())
 	if err != nil {
 		fmt.Println(c(red) + "❌ " + err.Error() + c(reset))
 		return
@@ -727,7 +770,7 @@ func getModelResponseTextWithOptions(messages []Message, stream bool, tools []To
 	start := time.Now()
 	payload := ChatRequest{Model: config.Model, Messages: messages, Stream: stream, Tools: tools}
 	data, _ := json.Marshal(payload)
-	resp, err := doWithFallback("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", data, commonHeaders())
+	resp, err := doRequest("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", data, commonHeaders(), context.Background())
 	if err != nil {
 		return "", err
 	}
@@ -745,7 +788,20 @@ func getModelResponseTextWithOptions(messages []Message, stream bool, tools []To
 		return "", err
 	}
 	if len(out.Choices) == 0 {
-		return "", errors.New("empty choices")
+		// retry once after short delay
+		time.Sleep(500 * time.Millisecond)
+		resp2, err := doRequest("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", data, commonHeaders(), context.Background())
+		if err != nil {
+			return "", err
+		}
+		defer resp2.Body.Close()
+		b2, _ := io.ReadAll(resp2.Body)
+		if err := json.Unmarshal(b2, &out); err != nil {
+			return "", err
+		}
+		if len(out.Choices) == 0 {
+			return "", errors.New("empty choices after retry")
+		}
 	}
 	return out.Choices[0].Message.Content, nil
 }
@@ -924,11 +980,7 @@ func approveTool(tc ToolCall) bool {
 func requestAgent(ctx context.Context, msgs []Message) (string, []ToolCall, error) {
 	payload := ChatRequest{Model: config.Model, Messages: msgs, Stream: false, Tools: toolSchemas(), ToolChoice: "auto"}
 	data, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", bytes.NewReader(data))
-	for k, v := range commonHeaders() {
-		req.Header.Set(k, v)
-	}
-	resp, err := doWithRequestFallback(ctx, req, data)
+	resp, err := doRequest("POST", strings.TrimRight(config.ProviderEndpoint, "/")+"/chat/completions", data, commonHeaders(), ctx)
 	if err != nil {
 		return "", nil, err
 	}
@@ -953,31 +1005,7 @@ func requestAgent(ctx context.Context, msgs []Message) (string, []ToolCall, erro
 	}
 	return m.Content, native, nil
 }
-func doWithRequestFallback(ctx context.Context, req *http.Request, body []byte) (*http.Response, error) {
-	var last error
-	for i, d := range fallbackDNS {
-		for a := 0; a < 3; a++ {
-			r2 := req.Clone(ctx)
-			r2.Body = io.NopCloser(bytes.NewReader(body))
-			resp, err := getClient(d.Address).Do(r2)
-			if err == nil && resp.StatusCode < 500 && resp.StatusCode != 403 && resp.StatusCode != 451 {
-				activeDNSName = d.Name
-				return resp, nil
-			}
-			if resp != nil {
-				last = fmt.Errorf("HTTP %d", resp.StatusCode)
-				resp.Body.Close()
-			} else {
-				last = err
-			}
-			if a < 2 {
-				time.Sleep(time.Duration(1<<a) * 250 * time.Millisecond)
-			}
-		}
-		i++
-	}
-	return nil, last
-}
+
 func extractToolCalls(text string) []ToolCall {
 	var out []ToolCall
 	re := regexp.MustCompile(`(?m)^\s*TOOL[:：]\s*([A-Za-z0-9_]+)\s*(.*)$`)
@@ -1000,32 +1028,7 @@ func parseToolArgs(name, argsStr string) *ToolCall {
 	}
 	return &ToolCall{Name: name, Args: args}
 }
-func mergeToolDeltas(dst []NativeToolCall, src []NativeToolCall) []NativeToolCall {
-	for _, d := range src {
-		idx := -1
-		for i, x := range dst {
-			if x.IndexLike(d) {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			dst = append(dst, d)
-			continue
-		}
-		dst[idx].Function.Arguments += d.Function.Arguments
-		if d.Function.Name != "" {
-			dst[idx].Function.Name = d.Function.Name
-		}
-	}
-	return dst
-}
-func (t NativeToolCall) IndexLike(x NativeToolCall) bool {
-	if t.ID != "" && x.ID != "" {
-		return t.ID == x.ID
-	}
-	return true
-}
+
 func jsonString(m map[string]string) string { b, _ := json.Marshal(m); return string(b) }
 
 // ---------------- Tools ----------------
@@ -1728,7 +1731,7 @@ func handleShellBang(command string) {
 	_, _ = runCommandStreaming(context.Background(), command, "90")
 }
 func fetchAvailableModels() ([]string, error) {
-	resp, err := doWithFallback("GET", strings.TrimRight(config.ProviderEndpoint, "/")+"/models", nil, commonHeaders())
+	resp, err := doRequest("GET", strings.TrimRight(config.ProviderEndpoint, "/")+"/models", nil, commonHeaders(), context.Background())
 	if err != nil {
 		return nil, err
 	}
